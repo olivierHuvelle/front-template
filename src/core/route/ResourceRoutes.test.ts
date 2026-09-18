@@ -73,7 +73,7 @@ describe('ResourceRoutes', () => {
   })
 
   it('throws when the route does not exist', () => {
-    // @ts-expect-error invalid known by ts
+    // @ts-expect-error testing runtime validation
     expect(() => routes.getRoute('unknown')).toThrow()
   })
 })

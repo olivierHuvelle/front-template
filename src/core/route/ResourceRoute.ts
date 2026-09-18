@@ -1,20 +1,22 @@
 import type { ZodRawShape } from 'zod'
 
-import type { Resource } from '@/core/resource/Resource'
+import type { Resource, ResourceOptions } from '@/core/resource/Resource'
 import { HTTP_METHOD } from '@/core/route/HttpMethod'
-import type { ResourceRouteName } from '@/core/route/ResourceRouteName.ts'
-import { RESOURCE_ROUTE } from '@/core/route/ResourceRouteName.ts'
+import { RESOURCE_ROUTE, type ResourceRouteName } from '@/core/route/ResourceRouteName'
 import type { Route } from '@/core/route/Route'
 
-export class ResourceRoutes<TShape extends ZodRawShape> {
-  public readonly resource: Resource<TShape>
+export class ResourceRoutes<
+  TShape extends ZodRawShape,
+  const TOptions extends ResourceOptions<TShape> = ResourceOptions<TShape>,
+> {
+  public readonly resource: Resource<TShape, TOptions>
   public readonly baseUrl: string
 
   private readonly routes: Route[]
 
-  constructor(resource: Resource<TShape>, baseUrl?: string) {
+  constructor(resource: Resource<TShape, TOptions>, baseUrl?: string) {
     this.resource = resource
-    this.baseUrl = baseUrl ?? `/${resource.name}s` // TODO : naif mais ok pour le moment, inclure .env dans un second temps
+    this.baseUrl = baseUrl ?? `/${resource.name}s`
     this.routes = this.generateRoutes()
   }
 
