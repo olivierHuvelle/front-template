@@ -1,13 +1,13 @@
 export type FieldSelection<TField extends PropertyKey> =
   | {
-      only: TField[]
-      except?: never
+      readonly only: readonly TField[]
+      readonly except?: never
     }
   | {
-      only?: never
-      except: TField[]
+      readonly only?: never
+      readonly except: readonly TField[]
     }
   | {
-      only?: never
-      except?: never
+      readonly only?: never
+      readonly except?: never
     }

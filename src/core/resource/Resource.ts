@@ -5,43 +5,48 @@ import type { FieldSelection } from '@/core/resource/FieldSelection'
 type ResourceField<TShape extends ZodRawShape> = keyof TShape
 
 export type ResourceOptions<TShape extends ZodRawShape> = {
-  readOnlyFields?: Array<ResourceField<TShape>>
+  readOnlyFields?: readonly ResourceField<TShape>[]
   create?: FieldSelection<ResourceField<TShape>>
   update?: FieldSelection<ResourceField<TShape>>
 }
 
-export class Resource<TShape extends ZodRawShape> {
+export class Resource<
+  TShape extends ZodRawShape,
+  const TOptions extends ResourceOptions<TShape> = ResourceOptions<TShape>,
+> {
   public readonly name: string
   public readonly schema: ZodObject<TShape>
 
-  public readonly readOnlyFields: Array<ResourceField<TShape>>
-  public readonly createFields: Array<ResourceField<TShape>>
-  public readonly updateFields: Array<ResourceField<TShape>>
+  public readonly readOnlyFields: readonly ResourceField<TShape>[]
+  public readonly createFields: readonly ResourceField<TShape>[]
+  public readonly updateFields: readonly ResourceField<TShape>[]
 
-  constructor(name: string, schema: ZodObject<TShape>, options: ResourceOptions<TShape> = {}) {
+  declare readonly $options: TOptions
+
+  constructor(name: string, schema: ZodObject<TShape>, options?: TOptions) {
     this.name = name
     this.schema = schema
 
-    this.readOnlyFields = options.readOnlyFields ?? []
+    this.readOnlyFields = options?.readOnlyFields ?? []
 
     const writableFields = this.getWritableFields()
 
-    this.createFields = this.selectFields(writableFields, options.create)
-    this.updateFields = this.selectFields(writableFields, options.update)
+    this.createFields = this.selectFields(writableFields, options?.create)
+    this.updateFields = this.selectFields(writableFields, options?.update)
   }
 
-  private getWritableFields(): Array<ResourceField<TShape>> {
+  private getWritableFields(): ResourceField<TShape>[] {
     const readOnlyFields = new Set<PropertyKey>(this.readOnlyFields)
 
-    return (Object.keys(this.schema.shape) as Array<ResourceField<TShape>>).filter(
+    return (Object.keys(this.schema.shape) as ResourceField<TShape>[]).filter(
       (field) => !readOnlyFields.has(field),
     )
   }
 
   private selectFields(
-    fields: Array<ResourceField<TShape>>,
+    fields: readonly ResourceField<TShape>[],
     selection?: FieldSelection<ResourceField<TShape>>,
-  ): Array<ResourceField<TShape>> {
+  ): readonly ResourceField<TShape>[] {
     if (selection?.only) {
       this.validateFields(selection.only, fields)
 
@@ -60,8 +65,8 @@ export class Resource<TShape extends ZodRawShape> {
   }
 
   private validateFields(
-    fields: Array<ResourceField<TShape>>,
-    availableFields: Array<ResourceField<TShape>>,
+    fields: readonly ResourceField<TShape>[],
+    availableFields: readonly ResourceField<TShape>[],
   ): void {
     const availableFieldSet = new Set<PropertyKey>(availableFields)
 
