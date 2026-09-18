@@ -34,15 +34,15 @@ export class Serializer<TShape extends ZodRawShape> {
   }
 
   public serialize(
-    data: Partial<ResourceData<TShape>>,
-    options: SerializeOptions<keyof ResourceData<TShape>> = {},
+    data: unknown,
+    options: SerializeOptions<keyof TShape> = {},
   ): Partial<Serialized<ResourceData<TShape>>> {
     // IDEA: SchemaUtils.omit(schema, fields), SchemaUtils.pick(schema, fields)
     // IDEA: add custom errors
 
     if (options.only) {
       const shape = Object.fromEntries(
-        options.only.map((field) => [field, this.resource.schema.shape[field as keyof TShape]]),
+        options.only.map((field) => [field, this.resource.schema.shape[field]]),
       ) as ZodRawShape
 
       return this.serializeShape(data, shape, options.partial)
@@ -68,7 +68,7 @@ export class Serializer<TShape extends ZodRawShape> {
   }
 
   private serializeShape(
-    data: Partial<ResourceData<TShape>>,
+    data: unknown,
     shape: ZodRawShape,
     partial = false,
   ): Partial<Serialized<ResourceData<TShape>>> {

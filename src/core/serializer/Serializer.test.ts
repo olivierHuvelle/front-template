@@ -148,7 +148,6 @@ describe('Serializer', () => {
       expect(() =>
         serializer.serialize({
           ...createValidData(),
-          // @ts-expect-error testing runtime validation
           active: 'invalid',
         }),
       ).toThrow()
