@@ -262,5 +262,66 @@ describe('Serializer', () => {
         ),
       ).toThrow()
     })
+
+    it('serializes partial selected fields', () => {
+      expect(
+        serializer.serialize(
+          {
+            active: true,
+          },
+          {
+            only: ['name', 'active'],
+            partial: true,
+          },
+        ),
+      ).toEqual({
+        active: true,
+      })
+    })
+
+    it('validates provided fields when partial', () => {
+      expect(() =>
+        serializer.serialize(
+          {
+            name: '',
+          },
+          {
+            only: ['name', 'active'],
+            partial: true,
+          },
+        ),
+      ).toThrow()
+    })
+
+    it('serializes partial fields with except', () => {
+      expect(
+        serializer.serialize(
+          {
+            active: true,
+          },
+          {
+            except: ['id'],
+            partial: true,
+          },
+        ),
+      ).toEqual({
+        active: true,
+      })
+    })
+
+    it('serializes partial data without field selection', () => {
+      expect(
+        serializer.serialize(
+          {
+            active: true,
+          },
+          {
+            partial: true,
+          },
+        ),
+      ).toEqual({
+        active: true,
+      })
+    })
   })
 })
