@@ -97,6 +97,33 @@ describe('Serializer', () => {
     })
   })
 
+  describe('deserializeMany', () => {
+    it('deserializes multiple resources', () => {
+      const data = [
+        createValidData(),
+        {
+          ...createValidData(),
+          id: 2,
+          name: 'Test 2',
+        },
+      ]
+
+      expect(serializer.deserializeMany(data)).toEqual(data)
+    })
+
+    it('throws when one resource is invalid', () => {
+      expect(() =>
+        serializer.deserializeMany([
+          createValidData(),
+          {
+            ...createValidData(),
+            id: 'invalid',
+          },
+        ]),
+      ).toThrow()
+    })
+  })
+
   describe('serialize', () => {
     it('serializes a complete resource', () => {
       const data = createValidData()
@@ -134,7 +161,7 @@ describe('Serializer', () => {
             name: 'Test',
           },
           {
-            fields: ['name'],
+            only: ['name'],
           },
         ),
       ).toEqual({
@@ -149,7 +176,7 @@ describe('Serializer', () => {
             name: '',
           },
           {
-            fields: ['name'],
+            only: ['name'],
           },
         ),
       ).toThrow()
@@ -162,7 +189,7 @@ describe('Serializer', () => {
             name: 'Test',
           },
           {
-            fields: ['name'],
+            only: ['name'],
           },
         ),
       ).toEqual({
@@ -177,7 +204,7 @@ describe('Serializer', () => {
             createdAt: new Date('2026-09-17T12:30:00.000Z'),
           },
           {
-            fields: ['createdAt'],
+            only: ['createdAt'],
           },
         ),
       ).toEqual({
@@ -197,7 +224,7 @@ describe('Serializer', () => {
       expect(result.events?.[0].occurredAt).toBe('2026-09-17T14:30:00.000Z')
     })
 
-    it('excludes selected fields', () => {
+    it('serializes all fields except selected fields', () => {
       const data = {
         name: 'Test',
         active: true,
@@ -210,7 +237,7 @@ describe('Serializer', () => {
 
       expect(
         serializer.serialize(data, {
-          exclude: ['id'],
+          except: ['id'],
         }),
       ).toEqual({
         name: 'Test',
@@ -223,14 +250,14 @@ describe('Serializer', () => {
       })
     })
 
-    it('still requires non-excluded fields', () => {
+    it('still requires fields that are not excepted', () => {
       expect(() =>
         serializer.serialize(
           {
             name: 'Test',
           },
           {
-            exclude: ['id'],
+            except: ['id'],
           },
         ),
       ).toThrow()
