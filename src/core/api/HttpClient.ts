@@ -11,10 +11,10 @@ export type HttpRequestOptions = {
 }
 
 export class HttpClient {
-  private readonly baseUrl: string
+  private readonly baseUrl?: string
 
   constructor(options: HttpClientOptions = {}) {
-    this.baseUrl = options.baseUrl ?? env('API_URL')
+    this.baseUrl = options.baseUrl
   }
 
   public get(url: string, options?: HttpRequestOptions): Promise<unknown> {
@@ -77,6 +77,8 @@ export class HttpClient {
   }
 
   private buildUrl(url: string): string {
-    return `${this.baseUrl.replace(/\/$/, '')}/${url.replace(/^\//, '')}`
+    const baseUrl = this.baseUrl ?? env('API_URL')
+
+    return `${baseUrl.replace(/\/$/, '')}/${url.replace(/^\//, '')}`
   }
 }

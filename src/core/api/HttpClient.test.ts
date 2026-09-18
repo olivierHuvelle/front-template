@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { HttpClient } from '@/core/api/HttpClient'
+import { initializeConfig } from '@/core/config/config'
 import { HTTP_METHOD } from '@/core/route/HttpMethod'
 
 const BASE_URL = 'http://localhost:3000'
@@ -104,6 +105,7 @@ describe('HttpClient', () => {
 
   it('sends a DELETE request', async () => {
     const path = '/todos/1'
+
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(null, {
         status: 204,
@@ -211,5 +213,32 @@ describe('HttpClient', () => {
     )
 
     await expect(client.get('/todos/999')).rejects.toThrow('HTTP 404: Not Found')
+  })
+
+  it('does not require config during construction', () => {
+    expect(() => new HttpClient()).not.toThrow()
+  })
+
+  it('resolves the configured base URL when making a request', async () => {
+    initializeConfig({
+      VITE_API_URL: 'http://localhost:8000/api',
+    })
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, {
+        status: 204,
+      }),
+    )
+
+    const configuredClient = new HttpClient()
+
+    await configuredClient.get('/todos')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:8000/api/todos',
+      expect.objectContaining({
+        method: HTTP_METHOD.GET,
+      }),
+    )
   })
 })

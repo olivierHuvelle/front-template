@@ -6,8 +6,9 @@ const createValidTodo = () => ({
   id: 1,
   title: 'Learn TanStack Query',
   description: 'Learn how to manage server state',
-  isCompleted: false,
-  createdAt: new Date('2026-09-18T08:00:00.000Z'),
+  completed: false,
+  created_at: new Date('2026-09-18T08:00:00.000Z'),
+  updated_at: new Date('2026-09-18T09:00:00.000Z'),
 })
 
 describe('todoResource', () => {
@@ -21,24 +22,22 @@ describe('todoResource', () => {
     expect(result.success).toBe(true)
   })
 
-  it('applies the default value for isCompleted', () => {
-    const todo = todoResource.schema.parse({
-      ...createValidTodo(),
-      isCompleted: undefined,
-    })
-
-    expect(todo.isCompleted).toBe(false)
-  })
-
-  it('accepts a todo without a description', () => {
-    const todo = createValidTodo()
-
+  it('accepts a todo with a null description', () => {
     const result = todoResource.schema.safeParse({
-      ...todo,
-      description: undefined,
+      ...createValidTodo(),
+      description: null,
     })
 
     expect(result.success).toBe(true)
+  })
+
+  it('rejects a todo without a description', () => {
+    const result = todoResource.schema.safeParse({
+      ...createValidTodo(),
+      description: undefined,
+    })
+
+    expect(result.success).toBe(false)
   })
 
   it('rejects an empty title', () => {
@@ -51,7 +50,7 @@ describe('todoResource', () => {
   })
 
   it('has the expected read-only fields', () => {
-    expect(todoResource.readOnlyFields).toEqual(['id', 'createdAt'])
+    expect(todoResource.readOnlyFields).toEqual(['id', 'created_at', 'updated_at'])
   })
 
   it('has the expected create fields', () => {
@@ -59,6 +58,6 @@ describe('todoResource', () => {
   })
 
   it('has the expected update fields', () => {
-    expect(todoResource.updateFields).toEqual(['title', 'description', 'isCompleted'])
+    expect(todoResource.updateFields).toEqual(['title', 'description', 'completed'])
   })
 })
