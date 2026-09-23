@@ -10,12 +10,16 @@ L'objectif n'est pas de recréer un framework généraliste, mais de fournir une
 
 La chaîne `Resource → ResourceRoutes → Serializer → ResourceApi → HttpClient` est en place et testée. La configuration, les settings, le bootstrap et les utilitaires de base sont également disponibles.
 
-La prochaine étape prévue est l'intégration de **TanStack Query** sur un cas réel `Todo`, avant de décider si une abstraction supplémentaire de cache/repository/service apporte réellement de la valeur.
+**TanStack Query est maintenant intégré** via `ResourceQuery`. Les lectures `getAll` / `get`, les mutations `create` / `update` / `delete`, les query keys, la propagation de `AbortSignal` et les règles d’invalidation du cache ont été validées contre l’API Laravel de référence et couvertes par des tests.
+
+La prochaine étape prévue est la couche **Service**, destinée à devenir l’API applicative exposée aux composants React et à masquer l’utilisation directe de `useQuery`, `useMutation` et `useQueryClient`.
 
 ```mermaid
 flowchart LR
-    UI[React / Feature] --> Q[Query layer\nà venir]
+    UI[React / Feature] --> Q[ResourceQuery]
+    Q --> TQ[TanStack Query]
     Q --> API[ResourceApi]
+    TQ --> Cache[(Query cache)]
     API --> Routes[ResourceRoutes]
     API --> Serializer
     API --> HTTP[HttpClient]
@@ -47,6 +51,8 @@ src/
 │   ├── bootstrap/
 │   │   └── bootstrapApplication.ts
 │   ├── config/
+│   ├── query/
+│   │   └── ResourceQuery.ts
 │   ├── resource/
 │   │   ├── FieldSelection.ts
 │   │   ├── Resource.ts
@@ -657,6 +663,7 @@ Exemples actuels :
 - `Serializer.test.ts` : validation, sélection, partial, dates et tableaux ;
 - `HttpClient.test.ts` : transport HTTP ;
 - `ResourceApi.test.ts` : orchestration CRUD avec vraies routes et vrai Serializer, en contrôlant uniquement le transport ;
+- `ResourceQuery.test.ts` : query keys, délégation des reads/mutations et politique d’invalidation du cache ;
 - tests dédiés pour config, settings et utils.
 
 Éviter de retester dans une feature un comportement générique déjà garanti par `core`, sauf si la feature possède un contrat spécifique à protéger.
@@ -685,11 +692,11 @@ HttpClient
 ResourceApi
   orchestration CRUD d'une Resource
 
-TanStack Query (à venir)
-  server state, cache, freshness, déduplication, mutations
+ResourceQuery / TanStack Query
+  query keys, server state, cache, mutations et invalidation
 
-Feature / Service / Query layer (à préciser)
-  comportement applicatif et métier
+Service (prochaine étape)
+  façade applicative destinée aux composants et comportement métier
 ```
 
 Quelques conséquences :
@@ -702,47 +709,144 @@ Quelques conséquences :
 
 ---
 
-# Prochaine étape : TanStack Query
+# TanStack Query et `ResourceQuery`
 
-TanStack Query n'est **pas encore intégré** dans l'état documenté ici.
-
-L'approche prévue est de commencer par un spike réel :
+TanStack Query est intégré au core via `ResourceQuery`. Cette couche adapte un `ResourceApi` aux primitives de TanStack Query sans déplacer la responsabilité HTTP ou de sérialisation dans le cache.
 
 ```text
-React
-  ↓
+React / futur Service
+    ↓
+ResourceQuery
+    ├── queryOptions / mutationOptions
+    ├── query keys
+    ├── invalidation du cache
+    └── ResourceApi
+            ↓
+        HttpClient
+            ↓
+         Backend
+```
+
+## Query keys
+
+Les clés actuelles suivent une convention simple et prévisible :
+
+```text
+[resourceName]                         rootKey
+[resourceName, 'list']                 listKey
+[resourceName, 'detail', id]           detailKey(id)
+```
+
+Exemple pour `todo` :
+
+```text
+['todo']
+['todo', 'list']
+['todo', 'detail', 42]
+```
+
+Cette structure permettra plus tard d’étendre les listes avec des paramètres (pagination, filtres, query string) sans mélanger des résultats distincts dans une même entrée de cache.
+
+## Lectures
+
+`getAll()` et `get(id)` retournent des `queryOptions` directement utilisables avec `useQuery`. Le `AbortSignal` fourni par TanStack Query est transmis à `ResourceApi`, puis à `HttpClient` et finalement à `fetch`.
+
+```ts
+const todos = useQuery(todoQuery.getAll())
+const todo = useQuery(todoQuery.get(42))
+```
+
+Flux :
+
+```text
+useQuery
+   ↓
+ResourceQuery.getAll() / get(id)
+   ↓
+ResourceApi
+   ↓
+HttpClient
+   ↓
+Backend
+```
+
+## Mutations
+
+`ResourceQuery` expose également les options de mutation pour le CRUD. Le `QueryClient` n’est pas conservé comme état de `ResourceQuery` : il est fourni à l’opération de mutation. Cela évite de transformer le client TanStack en singleton global et facilite l’isolation des tests.
+
+### CREATE
+
+```text
+ResourceApi.create(data)
+    ↓ succès
+invalidate ['resource', 'list']
+```
+
+Le type des variables est dérivé de `CreateData<Resource<...>>`; les règles `readOnlyFields` / `create` de la Resource restent donc propagées jusqu’à la mutation.
+
+### UPDATE
+
+```text
+ResourceApi.update(id, data)
+    ↓ succès
+├── invalidate ['resource', 'list']
+└── invalidate ['resource', 'detail', id]
+```
+
+La mutation reçoit conceptuellement :
+
+```ts
+{
+  id: 42,
+  data: {
+    title: 'Updated title',
+  },
+}
+```
+
+Le payload `data` conserve le type `UpdateData<Resource<...>>`.
+
+### DELETE
+
+```text
+ResourceApi.delete(id)
+    ↓ succès
+├── invalidate ['resource', 'list']
+└── remove ['resource', 'detail', id]
+```
+
+Le détail est supprimé du cache plutôt que simplement invalidé : après un DELETE réussi, la ressource est connue comme inexistante et un refetch du détail provoquerait inutilement une réponse 404.
+
+## Politique d’invalidation V1
+
+| Mutation | Liste      | Détail concerné |
+| -------- | ---------- | --------------- |
+| create   | invalidate | —               |
+| update   | invalidate | invalidate      |
+| delete   | invalidate | remove          |
+
+Les relations entre ressources, agrégats et invalidations via socket sont volontairement différés. La politique standard devra rester extensible lorsqu’un cas réel l’exigera.
+
+## Validation réelle
+
+Le flux a été validé contre l’API Laravel de référence : chargement de liste, chargement d’un record, création, modification et suppression. Les invalidations provoquent les refetch attendus sans état local manuel (`setTodos`, `useEffect`, etc.).
+
+## Direction Service
+
+L’objectif final reste que les composants n’interagissent pas directement avec TanStack Query. La prochaine couche envisagée est une façade `ResourceService` :
+
+```text
+Component
+    ↓
+ResourceService
+   /          \
+  ↓            ↓
+ResourceQuery  ResourceApi
+      ↓
 TanStack Query
-  ↓
-ResourceApi<Todo>
-  ↓
-API REST de référence
 ```
 
-Le but est d'observer les répétitions réelles autour de :
-
-- query keys ;
-- `queryFn` ;
-- mutations ;
-- invalidation ;
-- mise à jour du cache ;
-- propagation de `AbortSignal`.
-
-Ce n'est qu'après ce spike que sera décidée l'utilité d'une abstraction supplémentaire telle que `ResourceCache`, `Repository`, `Service` ou des factories de query options.
-
-**Ne pas créer une couche Repository uniquement pour renommer les méthodes de `QueryClient`.** Une abstraction supplémentaire devra centraliser de vraies conventions ou apporter une valeur mesurable.
-
-Architecture candidate, non finalisée :
-
-```mermaid
-flowchart TD
-    Component[React Component] --> Query[Query / Service layer]
-    Query --> TQ[TanStack Query]
-    Query --> API[ResourceApi]
-    API --> Serializer
-    API --> HTTP[HttpClient]
-    HTTP --> Backend[API]
-    TQ --> Cache[(Query cache)]
-```
+Le Service pourra exposer les hooks/opérations applicatives tout en laissant `ResourceQuery` responsable des conventions de cache. Il ne devra pas devenir un simple wrapper répétitif : une ressource CRUD standard doit nécessiter le moins possible de boilerplate spécifique.
 
 ---
 
@@ -760,10 +864,11 @@ Serializer                ✓
 HttpClient                ✓
 API backend de référence  ✓
 ResourceApi               ✓
-TanStack Query            → prochaine étape
+TanStack Query            ✓
+ResourceQuery             ✓
 Cache abstraction         → seulement si utile
 Errors                    → à concevoir
-Service / Query layer     → après le spike Query
+ResourceService           → prochaine étape
 Factory / génération      → plus tard
 Stabilisation V1          → après intégration réelle
 Logs                      → futur
