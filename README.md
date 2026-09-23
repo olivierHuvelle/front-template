@@ -12,13 +12,22 @@ La chaîne `Resource → ResourceRoutes → Serializer → ResourceApi → HttpC
 
 **TanStack Query est intégré** via `ResourceQuery`. Les lectures `getAll` / `get`, les mutations `create` / `update` / `delete`, les query keys, la propagation de `AbortSignal` et les règles d’invalidation du cache ont été validées contre l’API Laravel de référence et couvertes par des tests.
 
-La couche **Service est maintenant en place** via `createResourceService()`. Elle constitue la façade React d’une feature : les composants utilisent par exemple `todoService.useGetAll()`, `useGet()`, `useCreate()`, `useUpdate()` et `useDelete()` sans importer directement TanStack Query, `ResourceQuery` ou `ResourceApi`. Le typage dérivé de la `Resource` est conservé jusqu’aux variables des mutations.
+La couche **Service est en place** via `createResourceService()`. Elle constitue la façade React générique d’une feature : les composants utilisent par exemple `todoService.useGetAll()`, `useGet()`, `useCreate()`, `useUpdate()` et `useDelete()` sans importer directement TanStack Query, `ResourceQuery` ou `ResourceApi`.
+
+`createResourceService()` reçoit désormais explicitement un `ResourceQuery`. Une même instance de `ResourceQuery` peut ainsi être partagée entre le CRUD générique et les opérations métier spécifiques d’une feature.
+
+Une seconde feature de référence, **Note**, valide cette extensibilité avec l’opération métier `togglePinned`. `noteService.useTogglePinned()` appelle une méthode spécifique de `NoteApi`, puis réutilise la politique d’invalidation de `ResourceQuery` afin de rafraîchir la liste et le détail concernés.
+
+Le typage dérivé de la `Resource` reste conservé à travers toute la chaîne jusqu’aux variables des mutations.
 
 ```mermaid
 flowchart LR
     UI[React Component] --> S[Feature Service]
     S --> RS[createResourceService]
+    S --> Custom[Custom hooks]
     RS --> Q[ResourceQuery]
+    Custom --> Q
+    Custom --> API
     Q --> TQ[TanStack Query]
     Q --> API[ResourceApi]
     TQ --> Cache[(Query cache)]
@@ -71,6 +80,7 @@ src/
 │   ├── settings/
 │   └── utils/
 ├── features/
+│   ├── note/
 │   └── todo/
 └── test/
     └── setup.ts
@@ -667,9 +677,11 @@ Exemples actuels :
 - `Serializer.test.ts` : validation, sélection, partial, dates et tableaux ;
 - `HttpClient.test.ts` : transport HTTP ;
 - `ResourceApi.test.ts` : orchestration CRUD avec vraies routes et vrai Serializer, en contrôlant uniquement le transport ;
-- `ResourceQuery.test.ts` : query keys, délégation des reads/mutations et politique d’invalidation du cache ;
+- `ResourceQuery.test.ts` : query keys, délégation des reads/mutations, politique d’invalidation du cache et contrat de `invalidateResource()` ;
 - `ResourceService.test.tsx` : intégration React/TanStack de la façade CRUD ;
 - `ResourceService.types.test.ts` : conservation de l’inférence des payloads create/update à travers la factory ;
+- `NoteApi.test.ts` : contrat de l’opération métier `togglePinned`, endpoint spécifique, encodage de l’ID et désérialisation de la réponse ;
+- `note.service.test.tsx` : intégration React de `useTogglePinned()` et réutilisation de la politique d’invalidation de `ResourceQuery` ;
 - tests dédiés pour config, settings et utils.
 
 Éviter de retester dans une feature un comportement générique déjà garanti par `core`, sauf si la feature possède un contrat spécifique à protéger.
@@ -705,7 +717,8 @@ ResourceService
   façade React générique exposant les hooks CRUD aux composants
 
 Feature Service
-  point d’entrée unique d’une feature, extensible avec du comportement métier
+  point d’entrée public unique d’une feature ;
+  compose le CRUD générique avec les comportements métier spécifiques
 ```
 
 Quelques conséquences :
@@ -714,6 +727,9 @@ Quelques conséquences :
 - `Serializer` ne connaît pas HTTP ;
 - `ResourceRoutes` ne connaît pas l'origine de l'API ;
 - `ResourceApi` ne gère pas le cache ;
+- une opération métier spécifique peut étendre `ResourceApi` sans polluer le CRUD générique ;
+- un Feature Service peut réutiliser le même `ResourceQuery` pour le CRUD et ses opérations métier ;
+- les custom mutations ne doivent pas reconstruire manuellement les query keys lorsqu’une politique d’invalidation du core existe déjà ;
 - la UI ne devrait pas reconstruire manuellement les règles déjà exprimées par une Resource.
 
 ---
@@ -836,18 +852,40 @@ Le détail est supprimé du cache plutôt que simplement invalidé : après un D
 
 Les relations entre ressources, agrégats et invalidations via socket sont volontairement différés. La politique standard devra rester extensible lorsqu’un cas réel l’exigera.
 
+### Invalidation réutilisable
+
+`ResourceQuery` expose également :
+
+```ts
+invalidateResource(queryClient, id)
+```
+
+Cette méthode centralise la politique standard d’invalidation d’une ressource existante :
+
+```text
+invalidateResource(queryClient, id)
+    ├── invalidate [resourceName, 'list']
+    └── invalidate [resourceName, 'detail', id]
+```
+
+Elle est utilisée par la mutation générique `update`, mais peut également être réutilisée par les opérations métier spécifiques d’une feature.
+
+L’objectif est d’éviter qu’un service métier reconstruise lui-même les query keys ou duplique les conventions de cache du core.
+
 ## Validation réelle
 
 Le flux a été validé contre l’API Laravel de référence : chargement de liste, chargement d’un record, création, modification et suppression. Les invalidations provoquent les refetch attendus sans état local manuel (`setTodos`, `useEffect`, etc.).
 
 ## Service et façade de feature
 
-`createResourceService()` adapte un `ResourceApi` / `ResourceQuery` aux hooks React et fournit la façade CRUD générique destinée aux composants. Il s’agit volontairement d’une **factory fonctionnelle**, et non d’une classe : les hooks React doivent être appelés depuis des fonctions/hooks conformes aux Rules of Hooks.
+`createResourceService()` adapte un `ResourceQuery` aux hooks React et fournit la façade CRUD générique destinée aux composants.
+
+Il s’agit volontairement d’une **factory fonctionnelle**, et non d’une classe : les hooks React doivent être appelés depuis des fonctions/hooks conformes aux Rules of Hooks.
 
 ```text
 Component
     ↓
-todoService
+Feature Service
     ↓
 createResourceService()
     ↓
@@ -860,15 +898,20 @@ HttpClient
 Backend
 ```
 
+### Construction d'un service CRUD
+
 Pour une feature CRUD standard :
 
 ```ts
 const todoApi = new ResourceApi(todoResource)
+const todoQuery = new ResourceQuery(todoApi)
 
-export const todoService = createResourceService(todoApi)
+export const todoService = createResourceService(todoQuery)
 ```
 
-Le composant ne connaît alors que la façade de la feature :
+Le `ResourceQuery` est construit explicitement au niveau de la feature puis injecté dans `createResourceService()`.
+
+Le composant ne connaît ensuite que la façade de la feature :
 
 ```ts
 const todos = todoService.useGetAll()
@@ -879,7 +922,9 @@ const updateTodo = todoService.useUpdate()
 const deleteTodo = todoService.useDelete()
 ```
 
-Il n’importe directement ni `useQuery`, ni `useMutation`, ni `useQueryClient`, ni `ResourceQuery`, ni `ResourceApi`. Le service devient ainsi le point d’entrée public de la feature côté composant.
+Il n’importe directement ni `useQuery`, ni `useMutation`, ni `useQueryClient`, ni `ResourceQuery`, ni `ResourceApi`.
+
+Le service constitue donc le point d’entrée public de la feature côté composant.
 
 ### Conservation du typage
 
@@ -901,13 +946,73 @@ useCreate() / useUpdate()
 mutate(...)
 ```
 
-Un champ readonly tel que `id` reste donc interdit dans le payload d’un create ou dans `data` d’un update. Ce contrat est protégé par des tests de types dédiés.
+Un champ readonly tel que `id` reste donc interdit dans le payload d’un create ou dans `data` d’un update. Ce contrat est protégé par des tests de types dédiés couvrant toute cette chaîne.
 
 ### Extension métier
 
-Une feature pourra enrichir sa façade avec des opérations spécifiques sans obliger le composant à connaître une seconde couche. Les opérations utilisant des hooks React devront suivre les Rules of Hooks et être nommées `use...`; la logique pure pourra être exposée comme fonction normale.
+Une feature peut enrichir le CRUD générique avec ses propres opérations tout en conservant **une façade unique pour le composant**.
 
-La V1 reste volontairement minimale : le Service ne doit pas dupliquer les responsabilités de `ResourceQuery` ou `ResourceApi`.
+La feature `Note` fournit le premier cas réel avec `togglePinned`.
+
+Conceptuellement :
+
+```ts
+const noteApi = new NoteApi(noteResource)
+const noteQuery = new ResourceQuery(noteApi)
+
+const resourceService = createResourceService(noteQuery)
+
+function useTogglePinned() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (id: ResourceId) => noteApi.togglePinned(id),
+
+    onSuccess: async (_, id) => {
+      await noteQuery.invalidateResource(queryClient, id)
+    },
+  })
+}
+
+export const noteService = {
+  ...resourceService,
+  useTogglePinned,
+}
+```
+
+Le composant reste indépendant de cette plomberie :
+
+```ts
+const notes = noteService.useGetAll()
+const togglePinned = noteService.useTogglePinned()
+
+togglePinned.mutate(noteId)
+```
+
+Le flux devient :
+
+```text
+Component
+    ↓
+noteService.useTogglePinned()
+    ↓
+NoteApi.togglePinned(id)
+    ↓
+POST /notes/:id/toggle-pinned
+    ↓
+ResourceQuery.invalidateResource(id)
+    ├── invalidate list
+    └── invalidate detail(id)
+```
+
+Cette organisation maintient les responsabilités séparées :
+
+- `NoteApi` connaît l’appel HTTP spécifique ;
+- `ResourceQuery` connaît les query keys et la politique de cache ;
+- `noteService` compose les briques et expose l’opération à React ;
+- le composant ne connaît que `noteService`.
+
+Les custom mutations ne sont volontairement **pas encore généralisées dans le core**. Un seul cas réel ne justifie pas encore une abstraction supplémentaire. Une factory ou un helper dédié pourra être introduit si plusieurs features font émerger le même pattern.
 
 ---
 
@@ -927,12 +1032,15 @@ API backend de référence  ✓
 ResourceApi               ✓
 TanStack Query            ✓
 ResourceQuery             ✓
-ResourceService           ✓
-CRUD via feature service  ✓
-Cache abstraction         → seulement si utile
-Errors                    → à concevoir
-Factory / génération      → plus tard
-Stabilisation V1          → après seconde feature réelle
+ResourceService                ✓
+CRUD via feature service       ✓
+Custom feature operation       ✓
+Shared cache invalidation      ✓
+Second resource integration    ✓
+Cache abstraction              → seulement si utile
+Errors                         → à concevoir
+Factory / génération           → plus tard
+Stabilisation V1               → après seconde feature métier significative
 Logs                      → futur
 Authentication            → futur
 Notifications             → futur

@@ -1,10 +1,10 @@
-import { queryOptions, mutationOptions, type QueryClient } from '@tanstack/react-query'
+import { mutationOptions, queryOptions, type QueryClient } from '@tanstack/react-query'
 import type { ZodRawShape } from 'zod'
 
-import type { Resource, ResourceOptions } from '@/core/resource/Resource'
-import type { CreateData, UpdateData } from '@/core/resource/ResourceData'
 import type { ResourceApi } from '@/core/api/ResourceApi'
 import type { ResourceId } from '@/core/api/ResourceId'
+import type { Resource, ResourceOptions } from '@/core/resource/Resource'
+import type { CreateData, UpdateData } from '@/core/resource/ResourceData'
 
 export class ResourceQuery<
   TShape extends ZodRawShape,
@@ -26,6 +26,17 @@ export class ResourceQuery<
 
   public detailKey(id: ResourceId) {
     return [...this.rootKey, 'detail', id] as const
+  }
+
+  public async invalidateResource(queryClient: QueryClient, id: ResourceId): Promise<void> {
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: this.listKey,
+      }),
+      queryClient.invalidateQueries({
+        queryKey: this.detailKey(id),
+      }),
+    ])
   }
 
   public getAll() {
@@ -65,14 +76,7 @@ export class ResourceQuery<
       }) => this.api.update(id, data),
 
       onSuccess: async (_, { id }) => {
-        await Promise.all([
-          queryClient.invalidateQueries({
-            queryKey: this.listKey,
-          }),
-          queryClient.invalidateQueries({
-            queryKey: this.detailKey(id),
-          }),
-        ])
+        await this.invalidateResource(queryClient, id)
       },
     })
   }

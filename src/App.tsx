@@ -2,11 +2,12 @@ import { noteService } from '@/features/note/note.service'
 
 function App() {
   const notes = noteService.useGetAll()
-  const note = noteService.useGet(1)
+  const note = noteService.useGet(2)
 
   const createNote = noteService.useCreate()
   const updateNote = noteService.useUpdate()
   const deleteNote = noteService.useDelete()
+  const togglePinned = noteService.useTogglePinned()
 
   if (notes.isPending || note.isPending) {
     return <div>Loading...</div>
@@ -54,7 +55,7 @@ function App() {
       </section>
 
       <section>
-        <h2>GET ALL / UPDATE / DELETE</h2>
+        <h2>GET ALL / UPDATE / CUSTOM ACTION / DELETE</h2>
 
         {notes.data.map((item) => (
           <div key={item.id}>
@@ -69,10 +70,18 @@ function App() {
                 updateNote.mutate({
                   id: item.id,
                   data: {
-                    pinned: !item.pinned,
+                    title: `${item.title} updated`,
                   },
                 })
               }
+            >
+              Update title
+            </button>
+
+            <button
+              type="button"
+              disabled={togglePinned.isPending}
+              onClick={() => togglePinned.mutate(item.id)}
             >
               Toggle pinned
             </button>

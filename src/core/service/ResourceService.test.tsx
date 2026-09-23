@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 import type { ResourceApi } from '@/core/api/ResourceApi'
+import { ResourceQuery } from '@/core/query/ResourceQuery'
 import { Resource } from '@/core/resource/Resource'
 import { createResourceService } from '@/core/service/ResourceService'
 
@@ -80,7 +81,8 @@ describe('ResourceService', () => {
       },
     ])
 
-    const service = createResourceService(api)
+    const query = new ResourceQuery(api)
+    const service = createResourceService(query)
     const queryClient = createQueryClient()
 
     const { result } = renderHook(() => service.useGetAll(), {
@@ -111,7 +113,8 @@ describe('ResourceService', () => {
       completed: false,
     })
 
-    const service = createResourceService(api)
+    const query = new ResourceQuery(api)
+    const service = createResourceService(query)
     const queryClient = createQueryClient()
 
     const { result } = renderHook(() => service.useGet(42), {
@@ -141,7 +144,8 @@ describe('ResourceService', () => {
       completed: false,
     })
 
-    const service = createResourceService(api)
+    const query = new ResourceQuery(api)
+    const service = createResourceService(query)
     const queryClient = createQueryClient()
 
     const { result } = renderHook(() => service.useCreate(), {
@@ -169,7 +173,8 @@ describe('ResourceService', () => {
       completed: true,
     })
 
-    const service = createResourceService(api)
+    const query = new ResourceQuery(api)
+    const service = createResourceService(query)
     const queryClient = createQueryClient()
 
     const { result } = renderHook(() => service.useUpdate(), {
@@ -196,7 +201,8 @@ describe('ResourceService', () => {
 
     deleteResource.mockResolvedValue(undefined)
 
-    const service = createResourceService(api)
+    const query = new ResourceQuery(api)
+    const service = createResourceService(query)
     const queryClient = createQueryClient()
 
     const { result } = renderHook(() => service.useDelete(), {

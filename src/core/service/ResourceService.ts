@@ -1,17 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ZodRawShape } from 'zod'
 
-import type { ResourceApi } from '@/core/api/ResourceApi'
 import type { ResourceId } from '@/core/api/ResourceId'
-import { ResourceQuery } from '@/core/query/ResourceQuery'
+import type { ResourceQuery } from '@/core/query/ResourceQuery'
 import type { ResourceOptions } from '@/core/resource/Resource'
 
 export function createResourceService<
   TShape extends ZodRawShape,
   const TOptions extends ResourceOptions<TShape> = ResourceOptions<TShape>,
->(api: ResourceApi<TShape, TOptions>) {
-  const query = new ResourceQuery(api)
-
+>(query: ResourceQuery<TShape, TOptions>) {
   function useGetAll() {
     return useQuery(query.getAll())
   }

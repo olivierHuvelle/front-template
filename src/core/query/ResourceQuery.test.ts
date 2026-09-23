@@ -1,10 +1,10 @@
+import { QueryClient, type MutationFunctionContext } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 import type { ResourceApi } from '@/core/api/ResourceApi'
 import { ResourceQuery } from '@/core/query/ResourceQuery'
 import { Resource } from '@/core/resource/Resource'
-import { QueryClient, type MutationFunctionContext } from '@tanstack/react-query'
 
 const testSchema = z.object({
   id: z.number(),
@@ -72,6 +72,28 @@ describe('ResourceQuery', () => {
       const query = new ResourceQuery(api)
 
       expect(query.detailKey(42)).toEqual(['test', 'detail', 42])
+    })
+  })
+
+  describe('invalidation', () => {
+    it('invalidates the list and detail queries for a resource', async () => {
+      const { api } = createApiMock()
+      const query = new ResourceQuery(api)
+
+      const queryClient = new QueryClient()
+      const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
+
+      await query.invalidateResource(queryClient, 42)
+
+      expect(invalidateQueries).toHaveBeenCalledTimes(2)
+
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ['test', 'list'],
+      })
+
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ['test', 'detail', 42],
+      })
     })
   })
 
@@ -186,131 +208,131 @@ describe('ResourceQuery', () => {
 
       expect(invalidateQueries).not.toHaveBeenCalled()
     })
-  })
 
-  it('updates a resource and invalidates its list and detail queries', async () => {
-    const { api, update } = createApiMock()
-    const query = new ResourceQuery(api)
+    it('updates a resource and invalidates its list and detail queries', async () => {
+      const { api, update } = createApiMock()
+      const query = new ResourceQuery(api)
 
-    const queryClient = new QueryClient()
-    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
+      const queryClient = new QueryClient()
+      const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
 
-    const variables = {
-      id: 42,
-      data: {
+      const variables = {
+        id: 42,
+        data: {
+          title: 'Updated Todo',
+        },
+      }
+
+      const updatedResource = {
+        id: 42,
         title: 'Updated Todo',
-      },
-    }
+      }
 
-    const updatedResource = {
-      id: 42,
-      title: 'Updated Todo',
-    }
+      update.mockResolvedValue(updatedResource)
 
-    update.mockResolvedValue(updatedResource)
+      const options = query.update(queryClient)
 
-    const options = query.update(queryClient)
+      const result = await options.mutationFn?.(variables, createMutationContext(queryClient))
 
-    const result = await options.mutationFn?.(variables, createMutationContext(queryClient))
-
-    expect(update).toHaveBeenCalledOnce()
-    expect(update).toHaveBeenCalledWith(42, {
-      title: 'Updated Todo',
-    })
-
-    expect(result).toEqual(updatedResource)
-
-    await options.onSuccess?.(
-      updatedResource,
-      variables,
-      undefined,
-      createMutationContext(queryClient),
-    )
-
-    expect(invalidateQueries).toHaveBeenCalledTimes(2)
-
-    expect(invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ['test', 'list'],
-    })
-
-    expect(invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ['test', 'detail', 42],
-    })
-  })
-
-  it('does not invalidate queries while executing the update mutation', async () => {
-    const { api, update } = createApiMock()
-    const query = new ResourceQuery(api)
-
-    const queryClient = new QueryClient()
-    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
-
-    const variables = {
-      id: 42,
-      data: {
+      expect(update).toHaveBeenCalledOnce()
+      expect(update).toHaveBeenCalledWith(42, {
         title: 'Updated Todo',
-      },
-    }
+      })
 
-    update.mockResolvedValue({
-      id: 42,
-      title: 'Updated Todo',
+      expect(result).toEqual(updatedResource)
+
+      await options.onSuccess?.(
+        updatedResource,
+        variables,
+        undefined,
+        createMutationContext(queryClient),
+      )
+
+      expect(invalidateQueries).toHaveBeenCalledTimes(2)
+
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ['test', 'list'],
+      })
+
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ['test', 'detail', 42],
+      })
     })
 
-    const options = query.update(queryClient)
+    it('does not invalidate queries while executing the update mutation', async () => {
+      const { api, update } = createApiMock()
+      const query = new ResourceQuery(api)
 
-    await options.mutationFn?.(variables, createMutationContext(queryClient))
+      const queryClient = new QueryClient()
+      const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
 
-    expect(invalidateQueries).not.toHaveBeenCalled()
-  })
+      const variables = {
+        id: 42,
+        data: {
+          title: 'Updated Todo',
+        },
+      }
 
-  it('deletes a resource, invalidates the list and removes its detail query', async () => {
-    const { api, deleteResource } = createApiMock()
-    const query = new ResourceQuery(api)
+      update.mockResolvedValue({
+        id: 42,
+        title: 'Updated Todo',
+      })
 
-    const queryClient = new QueryClient()
-    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
-    const removeQueries = vi.spyOn(queryClient, 'removeQueries')
+      const options = query.update(queryClient)
 
-    deleteResource.mockResolvedValue(undefined)
+      await options.mutationFn?.(variables, createMutationContext(queryClient))
 
-    const options = query.delete(queryClient)
-    const id = 42
-
-    const result = await options.mutationFn?.(id, createMutationContext(queryClient))
-
-    expect(deleteResource).toHaveBeenCalledOnce()
-    expect(deleteResource).toHaveBeenCalledWith(id)
-    expect(result).toBeUndefined()
-
-    await options.onSuccess?.(undefined, id, undefined, createMutationContext(queryClient))
-
-    expect(invalidateQueries).toHaveBeenCalledOnce()
-    expect(invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ['test', 'list'],
+      expect(invalidateQueries).not.toHaveBeenCalled()
     })
 
-    expect(removeQueries).toHaveBeenCalledOnce()
-    expect(removeQueries).toHaveBeenCalledWith({
-      queryKey: ['test', 'detail', id],
+    it('deletes a resource, invalidates the list and removes its detail query', async () => {
+      const { api, deleteResource } = createApiMock()
+      const query = new ResourceQuery(api)
+
+      const queryClient = new QueryClient()
+      const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
+      const removeQueries = vi.spyOn(queryClient, 'removeQueries')
+
+      deleteResource.mockResolvedValue(undefined)
+
+      const options = query.delete(queryClient)
+      const id = 42
+
+      const result = await options.mutationFn?.(id, createMutationContext(queryClient))
+
+      expect(deleteResource).toHaveBeenCalledOnce()
+      expect(deleteResource).toHaveBeenCalledWith(id)
+      expect(result).toBeUndefined()
+
+      await options.onSuccess?.(undefined, id, undefined, createMutationContext(queryClient))
+
+      expect(invalidateQueries).toHaveBeenCalledOnce()
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ['test', 'list'],
+      })
+
+      expect(removeQueries).toHaveBeenCalledOnce()
+      expect(removeQueries).toHaveBeenCalledWith({
+        queryKey: ['test', 'detail', id],
+      })
     })
-  })
 
-  it('does not update the cache while executing the delete mutation', async () => {
-    const { api, deleteResource } = createApiMock()
-    const query = new ResourceQuery(api)
+    it('does not update the cache while executing the delete mutation', async () => {
+      const { api, deleteResource } = createApiMock()
+      const query = new ResourceQuery(api)
 
-    const queryClient = new QueryClient()
-    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
-    const removeQueries = vi.spyOn(queryClient, 'removeQueries')
+      const queryClient = new QueryClient()
+      const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
+      const removeQueries = vi.spyOn(queryClient, 'removeQueries')
 
-    deleteResource.mockResolvedValue(undefined)
+      deleteResource.mockResolvedValue(undefined)
 
-    const options = query.delete(queryClient)
+      const options = query.delete(queryClient)
 
-    await options.mutationFn?.(42, createMutationContext(queryClient))
+      await options.mutationFn?.(42, createMutationContext(queryClient))
 
-    expect(invalidateQueries).not.toHaveBeenCalled()
-    expect(removeQueries).not.toHaveBeenCalled()
+      expect(invalidateQueries).not.toHaveBeenCalled()
+      expect(removeQueries).not.toHaveBeenCalled()
+    })
   })
 })
