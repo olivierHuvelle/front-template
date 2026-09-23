@@ -1,69 +1,91 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-
-import { ResourceApi } from '@/core/api/ResourceApi'
-import { ResourceQuery } from '@/core/query/ResourceQuery'
-import { todoResource } from '@/features/todo/todo.resource'
-
-const todoApi = new ResourceApi(todoResource)
-const todoQuery = new ResourceQuery(todoApi)
+import { todoService } from '@/features/todo/todo.service'
 
 function App() {
-  const queryClient = useQueryClient()
+  const todos = todoService.useGetAll()
+  const todo = todoService.useGet(1)
 
-  const todos = useQuery(todoQuery.getAll())
+  const createTodo = todoService.useCreate()
+  const updateTodo = todoService.useUpdate()
+  const deleteTodo = todoService.useDelete()
 
-  const createTodo = useMutation(todoQuery.create(queryClient))
-  const deleteTodo = useMutation(todoQuery.delete(queryClient))
-  const updateTodo = useMutation(todoQuery.update(queryClient))
-
-  if (todos.isPending) {
+  if (todos.isPending || todo.isPending) {
     return <div>Loading...</div>
   }
 
   if (todos.isError) {
-    return <div>{todos.error.message}</div>
+    return <div>Failed to load todos: {todos.error.message}</div>
+  }
+
+  if (todo.isError) {
+    return <div>Failed to load todo #1: {todo.error.message}</div>
   }
 
   return (
-    <div>
-      <button
-        onClick={() =>
-          createTodo.mutate({
-            title: 'Created with TanStack Query',
-            description: 'ResourceQuery create test',
-          })
-        }
-        disabled={createTodo.isPending}
-      >
-        {createTodo.isPending ? 'Creating...' : 'Create Todo'}
-      </button>
+    <main>
+      <h1>ResourceService integration</h1>
 
-      {createTodo.isError && <p>Create failed: {createTodo.error.message}</p>}
+      <section>
+        <h2>GET #1</h2>
 
-      <hr />
+        <pre>{JSON.stringify(todo.data, null, 2)}</pre>
+      </section>
 
-      {todos.data.map((todo) => (
-        <div key={todo.id}>
-          #{todo.id} — {todo.title}
-          <button onClick={() => deleteTodo.mutate(todo.id)} disabled={deleteTodo.isPending}>
-            Delete
-          </button>
-          <button
-            onClick={() =>
-              updateTodo.mutate({
-                id: todo.id,
-                data: {
-                  title: `Updated ${todo.id}`,
-                },
-              })
-            }
-            disabled={updateTodo.isPending}
-          >
-            Update
-          </button>
-        </div>
-      ))}
-    </div>
+      <section>
+        <h2>CREATE</h2>
+
+        <button
+          type="button"
+          disabled={createTodo.isPending}
+          onClick={() =>
+            createTodo.mutate({
+              title: 'Created from ResourceService',
+              description: 'ResourceService integration test',
+            })
+          }
+        >
+          {createTodo.isPending ? 'Creating...' : 'Create Todo'}
+        </button>
+
+        {createTodo.isError && <p>Failed to create todo: {createTodo.error.message}</p>}
+
+        {createTodo.isSuccess && <pre>{JSON.stringify(createTodo.data, null, 2)}</pre>}
+      </section>
+
+      <section>
+        <h2>GET ALL / UPDATE / DELETE</h2>
+
+        {todos.data.map((item) => (
+          <div key={item.id}>
+            <span>
+              #{item.id} — {item.title} — {item.completed ? 'Completed' : 'Pending'}
+            </span>
+
+            <button
+              type="button"
+              disabled={updateTodo.isPending}
+              onClick={() =>
+                updateTodo.mutate({
+                  id: item.id,
+                  data: {
+                    completed: !item.completed,
+                  },
+                })
+              }
+            >
+              Toggle
+            </button>
+
+            <button
+              type="button"
+              disabled={deleteTodo.isPending}
+              onClick={() => deleteTodo.mutate(item.id)}
+            >
+              Delete
+            </button>
+          </div>
+        ))}
+      </section>
+    </main>
   )
 }
 
