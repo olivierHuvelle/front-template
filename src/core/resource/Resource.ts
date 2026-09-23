@@ -1,8 +1,14 @@
-import type { ZodObject, ZodRawShape } from 'zod'
+import type { ZodObject, ZodOptional, ZodRawShape } from 'zod'
 
 import type { FieldSelection } from '@/core/resource/FieldSelection'
+import type { CreateFields, UpdateFields } from '@/core/resource/ResourceFields'
+import { SchemaUtils } from '@/core/schema/SchemaUtils'
 
 type ResourceField<TShape extends ZodRawShape> = keyof TShape
+
+type PartialShape<TShape extends ZodRawShape> = {
+  [K in keyof TShape]: ZodOptional<TShape[K]>
+}
 
 export type ResourceOptions<TShape extends ZodRawShape> = {
   readOnlyFields?: readonly ResourceField<TShape>[]
@@ -18,8 +24,14 @@ export class Resource<
   public readonly schema: ZodObject<TShape>
 
   public readonly readOnlyFields: readonly ResourceField<TShape>[]
-  public readonly createFields: readonly ResourceField<TShape>[]
-  public readonly updateFields: readonly ResourceField<TShape>[]
+  public readonly createFields: readonly CreateFields<TShape, TOptions>[]
+  public readonly updateFields: readonly UpdateFields<TShape, TOptions>[]
+
+  public readonly createSchema: ZodObject<Pick<TShape, CreateFields<TShape, TOptions>>>
+
+  public readonly updateSchema: ZodObject<
+    PartialShape<Pick<TShape, UpdateFields<TShape, TOptions>>>
+  >
 
   declare readonly $options: TOptions
 
@@ -31,8 +43,19 @@ export class Resource<
 
     const writableFields = this.getWritableFields()
 
-    this.createFields = this.selectFields(writableFields, options?.create)
-    this.updateFields = this.selectFields(writableFields, options?.update)
+    this.createFields = this.selectFields(writableFields, options?.create) as readonly CreateFields<
+      TShape,
+      TOptions
+    >[]
+
+    this.updateFields = this.selectFields(writableFields, options?.update) as readonly UpdateFields<
+      TShape,
+      TOptions
+    >[]
+
+    this.createSchema = SchemaUtils.pick(this.schema, this.createFields)
+
+    this.updateSchema = SchemaUtils.pick(this.schema, this.updateFields).partial()
   }
 
   private getWritableFields(): ResourceField<TShape>[] {

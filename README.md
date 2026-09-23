@@ -18,11 +18,13 @@ La journalisation structurée est également intégrée. Le core expose un contr
 
 La couche **Service est en place** via `createResourceService()`. Elle constitue la façade React générique d’une feature : les composants utilisent par exemple `todoService.useGetAll()`, `useGet()`, `useCreate()`, `useUpdate()` et `useDelete()` sans importer directement TanStack Query, `ResourceQuery` ou `ResourceApi`.
 
-`createResourceService()` reçoit désormais explicitement un `ResourceQuery`. Une même instance de `ResourceQuery` peut ainsi être partagée entre le CRUD générique et les opérations métier spécifiques d’une feature.
+`createResourceService()` reçoit explicitement un `ResourceQuery`. Une même instance de `ResourceQuery` peut ainsi être partagée entre le CRUD générique et les opérations métier spécifiques d’une feature.
 
 Une seconde feature de référence, **Note**, valide cette extensibilité avec l’opération métier `togglePinned`. `noteService.useTogglePinned()` appelle une méthode spécifique de `NoteApi`, puis réutilise la politique d’invalidation de `ResourceQuery` afin de rafraîchir la liste et le détail concernés.
 
 Le typage dérivé de la `Resource` reste conservé à travers toute la chaîne jusqu’aux variables des mutations.
+
+La `Resource` dérive désormais également ses contrats de validation d'écriture : `createSchema` et `updateSchema` sont construits automatiquement à partir du schéma principal, des champs readonly et des règles `only` / `except`. Les types `CreateData` / `UpdateData` et les schémas Zod runtime restent ainsi alignés à partir de la même définition.
 
 ```mermaid
 flowchart LR
@@ -47,9 +49,11 @@ flowchart LR
 - TypeScript 6
 - Vite 8
 - Zod pour les schémas et la validation runtime
+- TanStack Query pour le server state et le cache
 - Vitest + Testing Library pour les tests
 - date-fns pour les dates
 - deepmerge-ts pour les settings
+- Pino pour l'implémentation actuelle du logging
 - ESLint + Prettier
 - Husky + lint-staged + commitlint
 - Node.js 24 minimum (`.nvmrc` = `24`)
@@ -58,6 +62,8 @@ flowchart LR
 
 ```text
 src/
+├── components/
+│   └── ui/
 ├── core/
 │   ├── api/
 │   │   ├── HttpClient.ts
@@ -84,16 +90,19 @@ src/
 │   ├── resource/
 │   │   ├── FieldSelection.ts
 │   │   ├── Resource.ts
-│   │   └── ResourceData.ts
-│   ├── service/
-│   │   └── ResourceService.ts
+│   │   ├── ResourceData.ts
+│   │   └── ResourceFields.ts
 │   ├── route/
 │   │   ├── HttpMethod.ts
 │   │   ├── ResourceRoute.ts
 │   │   ├── ResourceRouteName.ts
 │   │   └── Route.ts
+│   ├── schema/
+│   │   └── SchemaUtils.ts
 │   ├── serializer/
 │   │   └── Serializer.ts
+│   ├── service/
+│   │   └── ResourceService.ts
 │   ├── settings/
 │   └── utils/
 ├── features/
@@ -103,7 +112,7 @@ src/
     └── setup.ts
 ```
 
-`core/` contient les briques génériques du template. `features/` contient les éléments propres aux domaines métier. Les tests sont principalement colocalisés avec le code ; `src/test/` sert à l'infrastructure de test partagée.
+`core/` contient les briques génériques du template. `features/` contient les éléments propres aux domaines métier. `components/ui/` contient les primitives UI partagées. Les tests sont principalement colocalisés avec le code ; `src/test/` sert à l'infrastructure de test partagée.
 
 ---
 
@@ -113,21 +122,22 @@ src/
 
 `Resource` est la source de vérité d'une ressource côté front. Elle associe un nom, un schéma Zod et les règles indiquant quels champs peuvent être écrits lors d'un create ou d'un update.
 
-Exemple actuel :
+Exemple :
 
 ```ts
 export const todoSchema = z.object({
   id: z.number(),
   title: z.string().min(1),
-  description: z.string().optional(),
-  isCompleted: z.boolean().default(false),
-  createdAt: z.coerce.date(),
+  description: z.string().nullable(),
+  completed: z.boolean(),
+  created_at: z.coerce.date(),
+  updated_at: z.coerce.date(),
 })
 
 export const todoResource = new Resource('todo', todoSchema, {
-  readOnlyFields: ['id', 'createdAt'],
+  readOnlyFields: ['id', 'created_at', 'updated_at'],
   create: {
-    except: ['isCompleted'],
+    except: ['completed'],
   },
 })
 ```
@@ -142,16 +152,18 @@ flowchart TD
     Writable --> UpdateConfig[update only / except]
     CreateConfig --> CreateFields[createFields]
     UpdateConfig --> UpdateFields[updateFields]
+    CreateFields --> CreateSchema[createSchema]
+    UpdateFields --> UpdateSchema[updateSchema + partial]
 ```
 
 Pour ce `Todo` :
 
 ```text
-schema fields  = id, title, description, isCompleted, createdAt
-readOnlyFields = id, createdAt
-writableFields = title, description, isCompleted
+schema fields  = id, title, description, completed, created_at, updated_at
+readOnlyFields = id, created_at, updated_at
+writableFields = title, description, completed
 createFields   = title, description
-updateFields   = title, description, isCompleted
+updateFields   = title, description, completed
 ```
 
 Par défaut, tous les champs non readonly sont disponibles en create et en update.
@@ -170,15 +182,52 @@ ou :
 
 ```ts
 create: {
-  except: ['isCompleted'],
+  except: ['completed'],
 }
 ```
 
 Un champ déclaré readonly ne peut pas être réintroduit via `only`. La `Resource` vérifie également ces incohérences au runtime.
 
+## Schémas dérivés : `createSchema` et `updateSchema`
+
+La `Resource` dérive désormais deux schémas Zod d'écriture à partir du schéma principal et des règles de sélection :
+
+```ts
+todoResource.schema
+todoResource.createSchema
+todoResource.updateSchema
+```
+
+Pour l'exemple précédent :
+
+```text
+schema
+├── id
+├── title
+├── description
+├── completed
+├── created_at
+└── updated_at
+
+createSchema
+├── title
+└── description
+
+updateSchema
+├── title?
+├── description?
+└── completed?
+```
+
+`createSchema` reprend les validateurs Zod des champs sélectionnés pour la création. Les champs readonly et les champs exclus du create n'en font pas partie.
+
+`updateSchema` reprend de la même manière les champs sélectionnés pour l'update, puis applique une sémantique `partial` adaptée au PATCH : chaque champ est optionnel, mais lorsqu'un champ est présent ses contraintes Zod d'origine restent appliquées.
+
+Ces schémas permettent notamment à une future couche de formulaire de réutiliser directement le contrat de validation déjà défini par la `Resource`, sans reconstruire manuellement un second schéma UI.
+
 ## Typage dérivé : `CreateData` et `UpdateData`
 
-`ResourceData.ts` dérive les payloads TypeScript directement de la Resource et de ses options. Il n'est donc pas nécessaire de maintenir manuellement des interfaces `CreateTodo`, `UpdateTodo`, etc.
+`ResourceData.ts` dérive les payloads TypeScript directement de la `Resource` et de ses options. Il n'est donc pas nécessaire de maintenir manuellement des interfaces `CreateTodo`, `UpdateTodo`, etc.
 
 Pour le Todo ci-dessus :
 
@@ -186,29 +235,83 @@ Pour le Todo ci-dessus :
 type CreateTodo = CreateData<typeof todoResource>
 // {
 //   title: string
-//   description?: string
+//   description: string | null
 // }
 
 type UpdateTodo = UpdateData<typeof todoResource>
 // {
 //   title?: string
-//   description?: string
-//   isCompleted?: boolean
+//   description?: string | null
+//   completed?: boolean
 // }
 ```
 
-`UpdateData` est volontairement `Partial`: les updates utilisent actuellement PATCH.
+`UpdateData` est volontairement `Partial` : les updates utilisent actuellement PATCH.
 
 La propriété phantom `$options` de `Resource` existe uniquement au niveau du système de types afin de conserver le type littéral exact des options passées au constructeur. Elle n'est pas une donnée runtime à utiliser dans le code applicatif.
 
-### Deux niveaux de sécurité
+### Alignement compile-time / runtime
 
-Le template distingue volontairement :
+Le contrat d'écriture est dérivé sur deux axes à partir de la même `Resource` :
 
-1. **TypeScript / compile-time** : l'API haut niveau empêche les appels incorrects pendant le développement.
-2. **Zod / runtime** : les données réellement reçues ou sérialisées sont validées à l'exécution.
+```text
+Resource
+├── compile-time
+│   ├── CreateData<Resource>
+│   └── UpdateData<Resource>
+└── runtime
+    ├── createSchema
+    └── updateSchema
+```
 
-Par exemple, `ResourceApi.create()` exige un `CreateData<...>`, tandis que `Serializer.serialize()` accepte `unknown` puis valide la donnée avec Zod. Cela permet au Serializer de rester une vraie frontière de validation sans perdre le typage de l'API publique de la Resource.
+Les tests de types vérifient que les données inférées depuis `createSchema` / `updateSchema` correspondent aux types `CreateData` / `UpdateData`.
+
+Le template distingue donc volontairement :
+
+1. **TypeScript / compile-time** : l'API haut niveau empêche les appels incorrects pendant le développement ;
+2. **Zod / runtime** : les données réellement reçues, saisies ou sérialisées sont validées à l'exécution.
+
+Par exemple, `ResourceApi.create()` exige un `CreateData<...>`, tandis que la validation runtime peut s'appuyer sur `createSchema`.
+
+## `ResourceFields`
+
+`ResourceFields.ts` centralise le calcul type-level des champs disponibles en create et en update.
+
+Il applique successivement :
+
+```text
+champs du schema
+    ↓
+retrait des readOnlyFields
+    ↓
+application de only / except
+    ↓
+CreateFields / UpdateFields
+```
+
+Cette logique est séparée de `ResourceData.ts` : `ResourceFields` détermine les clés, tandis que `ResourceData` transforme ces clés en types de payload.
+
+---
+
+# Utilitaires de schéma
+
+## `SchemaUtils.pick()`
+
+`SchemaUtils.pick()` construit un nouveau `ZodObject` à partir d'un schéma et d'une liste typée de champs :
+
+```ts
+const schema = SchemaUtils.pick(todoResource.schema, ['title', 'description'])
+```
+
+Son type de retour conserve les clés sélectionnées :
+
+```ts
+ZodObject<Pick<TShape, TKey>>
+```
+
+Cette primitive évite de reconstruire manuellement des shapes Zod à plusieurs endroits du core. Elle est utilisée pour dériver les schémas d'écriture de `Resource` et par le `Serializer` lorsqu'il doit sérialiser une sélection de champs.
+
+Le helper reste volontairement minimal : aucun `omit()` générique n'est ajouté tant qu'un besoin récurrent ne le justifie.
 
 ---
 
@@ -251,6 +354,8 @@ Responsabilités actuelles :
 - sélection de champs avec `only` / `except` ;
 - sérialisation partielle avec `partial` ;
 - conversion récursive des `Date` en ISO, y compris dans les objets imbriqués et tableaux.
+
+Pour les sélections de champs, le Serializer réutilise `SchemaUtils.pick()` au lieu de reconstruire lui-même un `ZodObject`.
 
 Exemple :
 
@@ -404,7 +509,7 @@ sequenceDiagram
     Serializer-->>Caller: typed resource
 ```
 
-Le compile-time empêche déjà d'envoyer des champs qui ne font pas partie de `CreateData`; la sélection runtime `createFields` constitue en plus le contrat de sérialisation.
+Le compile-time empêche déjà d'envoyer des champs qui ne font pas partie de `CreateData`; la sélection runtime `createFields` constitue en plus le contrat de sérialisation. `createSchema` expose ce même contrat sous forme de schéma Zod réutilisable.
 
 ## Flux UPDATE
 
@@ -424,7 +529,7 @@ Serializer.deserialize()
 ResourceData
 ```
 
-Le `partial: true` est important : `UpdateData` autorise un PATCH avec un seul champ.
+Le `partial: true` est important : `UpdateData` autorise un PATCH avec un seul champ. `updateSchema` représente également ce contrat sous forme de schéma Zod partiel.
 
 ## Flux DELETE
 
@@ -729,31 +834,7 @@ npm run lint
 import { Resource } from '@/core/resource/Resource'
 ```
 
-L'alias est configuré côté Vite :
-
-```ts
-resolve: {
-  alias: {
-    '@': path.resolve(__dirname, './src'),
-  },
-}
-```
-
-et côté TypeScript :
-
-```json
-{
-  "paths": {
-    "@/*": ["./src/*"]
-  }
-}
-```
-
-Pour Vitest, `setupFiles` utilise actuellement explicitement le chemin relatif :
-
-```ts
-setupFiles: './src/test/setup.ts'
-```
+L'alias est configuré côté Vite et TypeScript.
 
 ## Formatage
 
@@ -781,18 +862,7 @@ Les hooks sont gérés par Husky.
 npx lint-staged
 ```
 
-`lint-staged` applique :
-
-```text
-*.{js,jsx,ts,tsx}
-    → eslint --fix
-    → prettier --write
-
-*.{json,css,md,html}
-    → prettier --write
-```
-
-Seuls les fichiers staged sont donc corrigés automatiquement avant le commit.
+`lint-staged` applique ESLint/Prettier uniquement aux fichiers staged.
 
 ### commit-msg
 
@@ -806,6 +876,7 @@ Exemples :
 
 ```text
 feat(api): add resource API
+feat(resource): derive create and update schemas
 feat(serializer): support partial serialization
 refactor(route): preserve resource option types
 fix(config): handle invalid API URL
@@ -828,17 +899,7 @@ Un push est donc bloqué si TypeScript ou les tests échouent. Le build complet 
 
 # Tests
 
-Vitest utilise `jsdom`, avec :
-
-```ts
-test: {
-  environment: 'jsdom',
-  setupFiles: './src/test/setup.ts',
-  globals: true,
-}
-```
-
-Testing Library est disponible pour les tests React.
+Vitest utilise `jsdom`, avec Testing Library disponible pour les tests React.
 
 ## Philosophie
 
@@ -847,7 +908,8 @@ Les tests doivent protéger les **contrats** plutôt que reproduire l'implément
 Exemples actuels :
 
 - `Resource.test.ts` : comportement runtime des champs readonly/create/update ;
-- `Resource.types.test.ts` : contrat compile-time de `CreateData` / `UpdateData` ;
+- `Resource.types.test.ts` : contrat compile-time de `CreateData` / `UpdateData`, ainsi que l'alignement avec `createSchema` / `updateSchema` ;
+- `SchemaUtils.types.test.ts` : conservation du typage des champs sélectionnés par `SchemaUtils.pick()` ;
 - `Serializer.test.ts` : validation, sélection, partial, dates, tableaux et contrat de `SerializationError` ;
 - `HttpClient.test.ts` : transport HTTP, logging des requêtes, `ApiError`, `NetworkError`, `ResponseParseError`, préservation des annulations et propagation des erreurs inattendues ;
 - `ResourceApi.test.ts` : orchestration CRUD avec vraies routes et vrai Serializer, en contrôlant uniquement le transport ;
@@ -870,7 +932,10 @@ Une règle importante du projet est de ne pas faire remonter les responsabilité
 
 ```text
 Resource
-  définition du contrat métier et des champs
+  définition du contrat métier, des champs et des schémas d'écriture dérivés
+
+SchemaUtils
+  primitives génériques de manipulation de schémas Zod
 
 ResourceRoutes
   convention des endpoints CRUD
@@ -901,33 +966,20 @@ Quelques conséquences :
 - `HttpClient` qualifie uniquement les erreurs propres à sa frontière (`NetworkError`, `ApiError`, `ResponseParseError`) ;
 - `Serializer` ne connaît pas HTTP ;
 - `Serializer` transforme uniquement les erreurs de validation qu'il comprend en `SerializationError` ;
+- `Serializer` réutilise les primitives de schéma du core au lieu de reconstruire les mêmes mécanismes ;
 - les erreurs inattendues ne sont pas masquées par une erreur applicative générique ;
 - `ResourceRoutes` ne connaît pas l'origine de l'API ;
 - `ResourceApi` ne gère pas le cache ;
 - une opération métier spécifique peut étendre `ResourceApi` sans polluer le CRUD générique ;
 - un Feature Service peut réutiliser le même `ResourceQuery` pour le CRUD et ses opérations métier ;
 - les custom mutations ne doivent pas reconstruire manuellement les query keys lorsqu’une politique d’invalidation du core existe déjà ;
-- la UI ne devrait pas reconstruire manuellement les règles déjà exprimées par une Resource.
+- la UI ne devrait pas reconstruire manuellement les règles déjà exprimées par une `Resource` ; elle peut notamment réutiliser `createSchema` / `updateSchema`.
 
 ---
 
 # TanStack Query et `ResourceQuery`
 
 TanStack Query est intégré au core via `ResourceQuery`. Cette couche adapte un `ResourceApi` aux primitives de TanStack Query sans déplacer la responsabilité HTTP ou de sérialisation dans le cache.
-
-```text
-React / futur Service
-    ↓
-ResourceQuery
-    ├── queryOptions / mutationOptions
-    ├── query keys
-    ├── invalidation du cache
-    └── ResourceApi
-            ↓
-        HttpClient
-            ↓
-         Backend
-```
 
 ## Query keys
 
@@ -953,28 +1005,9 @@ Cette structure permettra plus tard d’étendre les listes avec des paramètres
 
 `getAll()` et `get(id)` retournent des `queryOptions` directement utilisables avec `useQuery`. Le `AbortSignal` fourni par TanStack Query est transmis à `ResourceApi`, puis à `HttpClient` et finalement à `fetch`.
 
-```ts
-const todos = useQuery(todoQuery.getAll())
-const todo = useQuery(todoQuery.get(42))
-```
-
-Flux :
-
-```text
-useQuery
-   ↓
-ResourceQuery.getAll() / get(id)
-   ↓
-ResourceApi
-   ↓
-HttpClient
-   ↓
-Backend
-```
-
 ## Mutations
 
-`ResourceQuery` expose également les options de mutation pour le CRUD. Le `QueryClient` n’est pas conservé comme état de `ResourceQuery` : il est fourni à l’opération de mutation. Cela évite de transformer le client TanStack en singleton global et facilite l’isolation des tests.
+`ResourceQuery` expose également les options de mutation pour le CRUD. Le `QueryClient` n’est pas conservé comme état de `ResourceQuery` : il est fourni à l’opération de mutation.
 
 ### CREATE
 
@@ -984,7 +1017,7 @@ ResourceApi.create(data)
 invalidate ['resource', 'list']
 ```
 
-Le type des variables est dérivé de `CreateData<Resource<...>>`; les règles `readOnlyFields` / `create` de la Resource restent donc propagées jusqu’à la mutation.
+Le type des variables est dérivé de `CreateData<Resource<...>>`.
 
 ### UPDATE
 
@@ -993,17 +1026,6 @@ ResourceApi.update(id, data)
     ↓ succès
 ├── invalidate ['resource', 'list']
 └── invalidate ['resource', 'detail', id]
-```
-
-La mutation reçoit conceptuellement :
-
-```ts
-{
-  id: 42,
-  data: {
-    title: 'Updated title',
-  },
-}
 ```
 
 Le payload `data` conserve le type `UpdateData<Resource<...>>`.
@@ -1037,45 +1059,13 @@ Les relations entre ressources, agrégats et invalidations via socket sont volon
 invalidateResource(queryClient, id)
 ```
 
-Cette méthode centralise la politique standard d’invalidation d’une ressource existante :
-
-```text
-invalidateResource(queryClient, id)
-    ├── invalidate [resourceName, 'list']
-    └── invalidate [resourceName, 'detail', id]
-```
-
-Elle est utilisée par la mutation générique `update`, mais peut également être réutilisée par les opérations métier spécifiques d’une feature.
-
-L’objectif est d’éviter qu’un service métier reconstruise lui-même les query keys ou duplique les conventions de cache du core.
-
-## Validation réelle
-
-Le flux a été validé contre l’API Laravel de référence : chargement de liste, chargement d’un record, création, modification et suppression. Les invalidations provoquent les refetch attendus sans état local manuel (`setTodos`, `useEffect`, etc.).
+Cette méthode centralise la politique standard d’invalidation d’une ressource existante et peut être réutilisée par les opérations métier spécifiques d’une feature.
 
 ## Service et façade de feature
 
 `createResourceService()` adapte un `ResourceQuery` aux hooks React et fournit la façade CRUD générique destinée aux composants.
 
 Il s’agit volontairement d’une **factory fonctionnelle**, et non d’une classe : les hooks React doivent être appelés depuis des fonctions/hooks conformes aux Rules of Hooks.
-
-```text
-Component
-    ↓
-Feature Service
-    ↓
-createResourceService()
-    ↓
-ResourceQuery
-    ↓
-ResourceApi
-    ↓
-HttpClient
-    ↓
-Backend
-```
-
-### Construction d'un service CRUD
 
 Pour une feature CRUD standard :
 
@@ -1085,8 +1075,6 @@ const todoQuery = new ResourceQuery(todoApi)
 
 export const todoService = createResourceService(todoQuery)
 ```
-
-Le `ResourceQuery` est construit explicitement au niveau de la feature puis injecté dans `createResourceService()`.
 
 Le composant ne connaît ensuite que la façade de la feature :
 
@@ -1098,10 +1086,6 @@ const createTodo = todoService.useCreate()
 const updateTodo = todoService.useUpdate()
 const deleteTodo = todoService.useDelete()
 ```
-
-Il n’importe directement ni `useQuery`, ni `useMutation`, ni `useQueryClient`, ni `ResourceQuery`, ni `ResourceApi`.
-
-Le service constitue donc le point d’entrée public de la feature côté composant.
 
 ### Conservation du typage
 
@@ -1123,7 +1107,7 @@ useCreate() / useUpdate()
 mutate(...)
 ```
 
-Un champ readonly tel que `id` reste donc interdit dans le payload d’un create ou dans `data` d’un update. Ce contrat est protégé par des tests de types dédiés couvrant toute cette chaîne.
+Un champ readonly reste donc interdit dans les payloads.
 
 ### Extension métier
 
@@ -1131,65 +1115,7 @@ Une feature peut enrichir le CRUD générique avec ses propres opérations tout 
 
 La feature `Note` fournit le premier cas réel avec `togglePinned`.
 
-Conceptuellement :
-
-```ts
-const noteApi = new NoteApi(noteResource)
-const noteQuery = new ResourceQuery(noteApi)
-
-const resourceService = createResourceService(noteQuery)
-
-function useTogglePinned() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: (id: ResourceId) => noteApi.togglePinned(id),
-
-    onSuccess: async (_, id) => {
-      await noteQuery.invalidateResource(queryClient, id)
-    },
-  })
-}
-
-export const noteService = {
-  ...resourceService,
-  useTogglePinned,
-}
-```
-
-Le composant reste indépendant de cette plomberie :
-
-```ts
-const notes = noteService.useGetAll()
-const togglePinned = noteService.useTogglePinned()
-
-togglePinned.mutate(noteId)
-```
-
-Le flux devient :
-
-```text
-Component
-    ↓
-noteService.useTogglePinned()
-    ↓
-NoteApi.togglePinned(id)
-    ↓
-POST /notes/:id/toggle-pinned
-    ↓
-ResourceQuery.invalidateResource(id)
-    ├── invalidate list
-    └── invalidate detail(id)
-```
-
-Cette organisation maintient les responsabilités séparées :
-
-- `NoteApi` connaît l’appel HTTP spécifique ;
-- `ResourceQuery` connaît les query keys et la politique de cache ;
-- `noteService` compose les briques et expose l’opération à React ;
-- le composant ne connaît que `noteService`.
-
-Les custom mutations ne sont volontairement **pas encore généralisées dans le core**. Un seul cas réel ne justifie pas encore une abstraction supplémentaire. Une factory ou un helper dédié pourra être introduit si plusieurs features font émerger le même pattern.
+Les custom mutations ne sont volontairement **pas encore généralisées dans le core**. Une factory ou un helper dédié pourra être introduit si plusieurs features font émerger le même pattern.
 
 ---
 
@@ -1198,30 +1124,36 @@ Les custom mutations ne sont volontairement **pas encore généralisées dans le
 État actuel :
 
 ```text
-Resource                  ✓
-ResourceRoutes            ✓
-Config                    ✓
-Settings + Bootstrap      ✓
-Utils                     ✓
-Serializer                ✓
-HttpClient                ✓
-API backend de référence  ✓
-ResourceApi               ✓
-TanStack Query            ✓
-ResourceQuery             ✓
-ResourceService                ✓
-CRUD via feature service       ✓
-Custom feature operation       ✓
-Shared cache invalidation      ✓
-Second resource integration    ✓
-Cache abstraction              → seulement si utile
-Errors                         ✓
-Factory / génération           → plus tard
-Stabilisation V1               → après seconde feature métier significative
-Logs                      ✓
-Authentication            → futur
-Notifications             → futur
-UI                        → futur
+Resource                       ✓
+Resource fields/type derivation ✓
+createSchema / updateSchema     ✓
+SchemaUtils.pick                ✓
+ResourceRoutes                  ✓
+Config                          ✓
+Settings + Bootstrap            ✓
+Utils                           ✓
+Serializer                      ✓
+HttpClient                      ✓
+API backend de référence        ✓
+ResourceApi                     ✓
+TanStack Query                  ✓
+ResourceQuery                   ✓
+ResourceService                 ✓
+CRUD via feature service        ✓
+Custom feature operation        ✓
+Shared cache invalidation       ✓
+Second resource integration     ✓
+Errors                          ✓
+Logs                            ✓
+Tailwind CSS                    ✓
+shadcn/ui base                  ✓
+UI / forms                      → en cours
+Relations                       → après cas d'usage concret
+Cache abstraction               → seulement si utile
+Factory / génération            → plus tard
+Authentication                  → futur
+Notifications                   → futur
+Stabilisation V1                → après cas métier significatif
 ```
 
 ## Points volontairement différés
@@ -1233,7 +1165,8 @@ Plusieurs sujets sont identifiés mais ne doivent pas être implémentés préma
 - réponses texte/blob ;
 - abstraction de cache ;
 - options supplémentaires du Serializer ;
-- helpers éventuels de schéma (`pick` / `omit`) ;
+- `SchemaUtils.omit()` tant qu'il n'existe pas plusieurs usages réels ;
+- relations entre ressources ;
 - conventions de mapping/casing entre backend et front ;
 - pluralisation avancée des routes.
 
@@ -1247,7 +1180,7 @@ Le template est développé avec une petite API REST Laravel servant de backend 
 
 Le core doit rester **backend-agnostic** : les conventions spécifiques à Laravel ne doivent pas remonter dans `Resource`, `Serializer`, `HttpClient` ou `ResourceApi`.
 
-Un point d'attention actuel est le contrat Todo : le front utilise notamment `isCompleted` / `createdAt`, tandis que le backend de référence peut utiliser des conventions différentes telles que `completed` / `created_at`. Le core n'effectue actuellement **aucune conversion automatique de casing**. Le contrat devra être aligné ou une stratégie explicite devra être introduite lors de l'intégration réelle.
+Un point d'attention actuel est le contrat Todo : le front utilise actuellement le contrat exposé par `todoResource`; si le backend de référence utilise des conventions de nommage différentes, le core n'effectue actuellement **aucune conversion automatique de casing**. Le contrat doit être aligné ou une stratégie explicite devra être introduite lors de l'intégration réelle.
 
 ---
 
@@ -1259,9 +1192,10 @@ Lors d'une évolution du template :
 2. privilégier une modification locale plutôt qu'une abstraction transversale prématurée ;
 3. conserver le typage strict au niveau des API publiques ;
 4. valider au runtime les données provenant de frontières externes ;
-5. ajouter ou adapter les tests du contrat concerné ;
-6. exécuter `typecheck`, tests et lint ;
-7. faire un commit Conventional Commit ciblé ;
-8. noter les abstractions potentielles plutôt que de les construire sans cas d'usage réel.
+5. dériver les contrats plutôt que dupliquer types, schémas et sélections lorsqu'ils expriment la même règle ;
+6. ajouter ou adapter les tests du contrat concerné ;
+7. exécuter `typecheck`, tests et lint ;
+8. faire un commit Conventional Commit ciblé ;
+9. noter les abstractions potentielles plutôt que de les construire sans cas d'usage réel.
 
 Le template doit rester rapide à comprendre et à utiliser : la réutilisabilité n'a de valeur que si elle réduit réellement le code et la charge cognitive des features.

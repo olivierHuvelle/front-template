@@ -1,8 +1,9 @@
-import { z, ZodError, type ZodRawShape } from 'zod'
+import { z, ZodError, type ZodObject, type ZodRawShape } from 'zod'
 
 import { SerializationError } from '@/core/error/SerializationError'
 import type { FieldSelection } from '@/core/resource/FieldSelection'
 import type { Resource } from '@/core/resource/Resource'
+import { SchemaUtils } from '@/core/schema/SchemaUtils'
 import { DateUtils } from '@/core/utils/DateUtils'
 
 type ResourceData<TShape extends ZodRawShape> = z.infer<Resource<TShape>['schema']>
@@ -63,46 +64,31 @@ export class Serializer<TShape extends ZodRawShape> {
     options: SerializeOptions<keyof TShape> = {},
   ): Partial<Serialized<ResourceData<TShape>>> {
     if (options.only) {
-      const shape = Object.fromEntries(
-        options.only.map((field) => [field, this.resource.schema.shape[field]]),
-      ) as ZodRawShape
+      const schema = SchemaUtils.pick(this.resource.schema, options.only)
 
-      return this.serializeShape(data, shape, options.partial)
+      return this.serializeSchema(data, schema, options.partial)
     }
 
     if (options.except) {
       const excludedFields = new Set<PropertyKey>(options.except)
 
-      const shape = Object.fromEntries(
-        Object.entries(this.resource.schema.shape).filter(([field]) => !excludedFields.has(field)),
-      ) as ZodRawShape
+      const fields = (Object.keys(this.resource.schema.shape) as (keyof TShape)[]).filter(
+        (field) => !excludedFields.has(field),
+      )
 
-      return this.serializeShape(data, shape, options.partial)
+      const schema = SchemaUtils.pick(this.resource.schema, fields)
+
+      return this.serializeSchema(data, schema, options.partial)
     }
 
-    if (options.partial) {
-      return this.serializeShape(data, this.resource.schema.shape, true)
-    }
-
-    try {
-      const validatedData = this.resource.schema.parse(data)
-
-      return this.serializeValue(validatedData) as Serialized<ResourceData<TShape>>
-    } catch (error) {
-      if (error instanceof ZodError) {
-        throw this.createSerializationError(error)
-      }
-
-      throw error
-    }
+    return this.serializeSchema(data, this.resource.schema, options.partial)
   }
 
-  private serializeShape(
+  private serializeSchema(
     data: unknown,
-    shape: ZodRawShape,
+    schema: ZodObject<ZodRawShape>,
     partial = false,
   ): Partial<Serialized<ResourceData<TShape>>> {
-    const schema = z.object(shape)
     const validationSchema = partial ? schema.partial() : schema
 
     try {

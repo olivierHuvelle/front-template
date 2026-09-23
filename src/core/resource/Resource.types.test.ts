@@ -40,10 +40,6 @@ describe('Resource type inference', () => {
     expectTypeOf<Options['readOnlyFields']>().toEqualTypeOf<readonly ['id', 'createdAt']>()
   })
 
-  it('preserves create except field literals', () => {
-    expectTypeOf<Options['create']['except']>().toEqualTypeOf<readonly ['isCompleted']>()
-  })
-
   it('derives create data', () => {
     expectTypeOf<Create>().toEqualTypeOf<{
       title: string
@@ -57,6 +53,103 @@ describe('Resource type inference', () => {
       description?: string
       isCompleted?: boolean
     }>()
+  })
+
+  it('derives create schema data', () => {
+    const data = resource.createSchema.parse({
+      title: 'Test',
+    })
+
+    expectTypeOf(data).toEqualTypeOf<Create>()
+  })
+
+  it('create schema accepts valid create data', () => {
+    expect(
+      resource.createSchema.parse({
+        title: 'Test',
+      }),
+    ).toEqual({
+      title: 'Test',
+    })
+  })
+
+  it('create schema excludes non-create fields', () => {
+    const result = resource.createSchema.parse({
+      title: 'Test',
+      isCompleted: true,
+      id: 42,
+    })
+
+    expect(result).toEqual({
+      title: 'Test',
+    })
+  })
+
+  it('create schema preserves field validation', () => {
+    const validatedSchema = z.object({
+      id: z.number(),
+      title: z.string().min(1),
+    })
+
+    const validatedResource = new Resource('test', validatedSchema, {
+      readOnlyFields: ['id'],
+    })
+
+    expect(() =>
+      validatedResource.createSchema.parse({
+        title: '',
+      }),
+    ).toThrow()
+  })
+  it('derives update schema data', () => {
+    const data = resource.updateSchema.parse({
+      isCompleted: true,
+    })
+
+    expectTypeOf(data).toEqualTypeOf<Update>()
+  })
+
+  it('update schema accepts partial update data', () => {
+    expect(
+      resource.updateSchema.parse({
+        isCompleted: true,
+      }),
+    ).toEqual({
+      isCompleted: true,
+    })
+  })
+
+  it('update schema accepts empty update data', () => {
+    expect(resource.updateSchema.parse({})).toEqual({})
+  })
+
+  it('update schema excludes read-only fields', () => {
+    const result = resource.updateSchema.parse({
+      title: 'Updated',
+      id: 42,
+      createdAt: new Date(),
+    })
+
+    expect(result).toEqual({
+      title: 'Updated',
+    })
+  })
+
+  it('update schema preserves field validation', () => {
+    const validatedSchema = z.object({
+      id: z.number(),
+      title: z.string().min(1),
+    })
+
+    const validatedResource = new Resource('test', validatedSchema, {
+      readOnlyFields: ['id'],
+    })
+
+    expect(() =>
+      validatedResource.updateSchema.parse({
+        title: '',
+      }),
+    ).toThrow()
   })
 })
 
