@@ -1,33 +1,33 @@
-import { todoService } from '@/features/todo/todo.service'
+import { noteService } from '@/features/note/note.service'
 
 function App() {
-  const todos = todoService.useGetAll()
-  const todo = todoService.useGet(1)
+  const notes = noteService.useGetAll()
+  const note = noteService.useGet(1)
 
-  const createTodo = todoService.useCreate()
-  const updateTodo = todoService.useUpdate()
-  const deleteTodo = todoService.useDelete()
+  const createNote = noteService.useCreate()
+  const updateNote = noteService.useUpdate()
+  const deleteNote = noteService.useDelete()
 
-  if (todos.isPending || todo.isPending) {
+  if (notes.isPending || note.isPending) {
     return <div>Loading...</div>
   }
 
-  if (todos.isError) {
-    return <div>Failed to load todos: {todos.error.message}</div>
+  if (notes.isError) {
+    return <div>Failed to load notes: {notes.error.message}</div>
   }
 
-  if (todo.isError) {
-    return <div>Failed to load todo #1: {todo.error.message}</div>
+  if (note.isError) {
+    return <div>Failed to load note #1: {note.error.message}</div>
   }
 
   return (
     <main>
-      <h1>ResourceService integration</h1>
+      <h1>Note integration</h1>
 
       <section>
         <h2>GET #1</h2>
 
-        <pre>{JSON.stringify(todo.data, null, 2)}</pre>
+        <pre>{JSON.stringify(note.data, null, 2)}</pre>
       </section>
 
       <section>
@@ -35,50 +35,52 @@ function App() {
 
         <button
           type="button"
-          disabled={createTodo.isPending}
+          disabled={createNote.isPending}
           onClick={() =>
-            createTodo.mutate({
-              title: 'Created from ResourceService',
-              description: 'ResourceService integration test',
+            createNote.mutate({
+              title: 'Created from React',
+              content: 'Second resource integration test',
+              category: 'personal',
+              pinned: false,
             })
           }
         >
-          {createTodo.isPending ? 'Creating...' : 'Create Todo'}
+          {createNote.isPending ? 'Creating...' : 'Create Note'}
         </button>
 
-        {createTodo.isError && <p>Failed to create todo: {createTodo.error.message}</p>}
+        {createNote.isError && <p>Failed to create note: {createNote.error.message}</p>}
 
-        {createTodo.isSuccess && <pre>{JSON.stringify(createTodo.data, null, 2)}</pre>}
+        {createNote.isSuccess && <pre>{JSON.stringify(createNote.data, null, 2)}</pre>}
       </section>
 
       <section>
         <h2>GET ALL / UPDATE / DELETE</h2>
 
-        {todos.data.map((item) => (
+        {notes.data.map((item) => (
           <div key={item.id}>
             <span>
-              #{item.id} — {item.title} — {item.completed ? 'Completed' : 'Pending'}
+              #{item.id} — {item.title} — {item.category} — {item.pinned ? 'Pinned' : 'Not pinned'}
             </span>
 
             <button
               type="button"
-              disabled={updateTodo.isPending}
+              disabled={updateNote.isPending}
               onClick={() =>
-                updateTodo.mutate({
+                updateNote.mutate({
                   id: item.id,
                   data: {
-                    completed: !item.completed,
+                    pinned: !item.pinned,
                   },
                 })
               }
             >
-              Toggle
+              Toggle pinned
             </button>
 
             <button
               type="button"
-              disabled={deleteTodo.isPending}
-              onClick={() => deleteTodo.mutate(item.id)}
+              disabled={deleteNote.isPending}
+              onClick={() => deleteNote.mutate(item.id)}
             >
               Delete
             </button>
