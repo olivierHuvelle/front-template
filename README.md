@@ -10,6 +10,8 @@ L'objectif n'est pas de recréer un framework généraliste, mais de fournir une
 
 La chaîne `Resource → ResourceRoutes → Serializer → ResourceApi → HttpClient` est en place et testée. La configuration, les settings, le bootstrap et les utilitaires de base sont également disponibles.
 
+La gestion structurée des erreurs est également en place. Le core distingue désormais les erreurs de configuration, de settings, de transport réseau, de réponse HTTP, de parsing de réponse et de sérialisation, tout en conservant l'erreur d'origine via `cause` lorsqu'elle est connue.
+
 **TanStack Query est intégré** via `ResourceQuery`. Les lectures `getAll` / `get`, les mutations `create` / `update` / `delete`, les query keys, la propagation de `AbortSignal` et les règles d’invalidation du cache ont été validées contre l’API Laravel de référence et couvertes par des tests.
 
 La couche **Service est en place** via `createResourceService()`. Elle constitue la façade React générique d’une feature : les composants utilisent par exemple `todoService.useGetAll()`, `useGet()`, `useCreate()`, `useUpdate()` et `useDelete()` sans importer directement TanStack Query, `ResourceQuery` ou `ResourceApi`.
@@ -62,6 +64,14 @@ src/
 │   ├── bootstrap/
 │   │   └── bootstrapApplication.ts
 │   ├── config/
+│   ├── error/
+│   │   ├── AppError.ts
+│   │   ├── ApiError.ts
+│   │   ├── ConfigurationError.ts
+│   │   ├── NetworkError.ts
+│   │   ├── ResponseParseError.ts
+│   │   ├── SerializationError.ts
+│   │   └── SettingsError.ts
 │   ├── query/
 │   │   └── ResourceQuery.ts
 │   ├── resource/
@@ -230,6 +240,7 @@ Responsabilités actuelles :
 - `deserialize(data)` : valide une ressource avec Zod ;
 - `deserializeMany(data)` : valide un tableau de ressources ;
 - `serialize(data)` : valide puis transforme les valeurs transportables ;
+- transforme les `ZodError` comprises à cette frontière en `SerializationError`, avec `operation` (`serialize` / `deserialize`), nom de ressource et `cause` ;
 - sélection de champs avec `only` / `except` ;
 - sérialisation partielle avec `partial` ;
 - conversion récursive des `Date` en ISO, y compris dans les objets imbriqués et tableaux.
@@ -260,6 +271,8 @@ le payload est valide sans exiger title et description
 
 Le Serializer ne connaît volontairement ni HTTP, ni create/update, ni TanStack Query.
 
+Une donnée JSON syntaxiquement valide mais incompatible avec le schéma de la `Resource` produit une `SerializationError`. Pour `deserializeMany()`, le chemin Zod conservé dans `cause` permet notamment d'identifier l'index et le champ invalides.
+
 ---
 
 # HTTP
@@ -286,14 +299,18 @@ Comportements actuels :
 - `Content-Type: application/json` lorsqu'un body est présent ;
 - headers personnalisés ;
 - `AbortSignal` ;
-- erreur simple pour une réponse HTTP non `ok` ;
+- `ApiError` pour une réponse HTTP non `ok`, avec statut, méthode, URL et body de réponse lorsqu'il est lisible ;
+- `NetworkError` lorsqu'un échec réseau de `fetch()` est identifié ;
+- conservation de `AbortError` afin que les annulations restent distinctes des erreurs réseau ;
+- `ResponseParseError` lorsqu'une réponse annoncée JSON ne peut pas être parsée ;
+- propagation intacte des erreurs inattendues ;
 - `204` → `undefined` ;
 - réponse non JSON → `undefined` ;
-- réponse JSON → `unknown`.
+- réponse JSON valide → `unknown`.
 
-Le retour `unknown` est intentionnel : `HttpClient` transporte des données ; la validation appartient à la couche supérieure.
+Le retour `unknown` est intentionnel : `HttpClient` transporte des données ; la validation métier appartient à la couche supérieure.
 
-`AbortSignal` permettra notamment à TanStack Query de propager son signal d'annulation jusqu'à `fetch`.
+`AbortSignal` permet à TanStack Query de propager son signal d'annulation jusqu'à `fetch`. Une annulation n'est pas requalifiée en `NetworkError` : l'`AbortError` d'origine remonte intacte.
 
 ---
 
@@ -441,7 +458,7 @@ VITE_API_URL=http://localhost:3000
 1. conserve les variables préfixées `VITE_` ;
 2. retire ce préfixe ;
 3. valide le résultat avec un schéma Zod strict ;
-4. produit une erreur lisible si la configuration est invalide.
+4. transforme une erreur de validation Zod en `ConfigurationError` lisible, en conservant la `ZodError` dans `cause`.
 
 `initializeConfig()` doit être appelé avant `env()`.
 
@@ -458,7 +475,7 @@ date: {
 }
 ```
 
-Les overrides sont validés puis fusionnés profondément avec les valeurs par défaut via `deepmerge-ts`.
+Les overrides sont validés puis fusionnés profondément avec les valeurs par défaut via `deepmerge-ts`. Une configuration de settings invalide produit une `SettingsError` dont `cause` conserve la `ZodError` d'origine.
 
 ## Bootstrap
 
@@ -471,6 +488,80 @@ bootstrapApplication()
 ```
 
 Il est appelé dans `main.tsx` **avant le render React** afin que les services qui dépendent de la configuration puissent être utilisés ensuite en sécurité.
+
+---
+
+# Gestion des erreurs
+
+Le core possède une hiérarchie d'erreurs structurées basée sur `AppError`. L'objectif n'est pas de convertir toutes les exceptions en erreurs custom, mais de typer uniquement les erreurs dont la couche courante comprend réellement la signification.
+
+```text
+AppError
+├── ConfigurationError
+│   └── variables d'environnement / config invalides
+├── SettingsError
+│   └── settings applicatifs invalides
+├── NetworkError
+│   └── échec réseau identifié lors de fetch()
+├── ApiError
+│   └── réponse HTTP non successful
+├── ResponseParseError
+│   └── réponse annoncée JSON mais JSON illisible
+└── SerializationError
+    └── données incompatibles avec le schéma d'une Resource
+        ├── serialize
+        └── deserialize
+```
+
+Chaque erreur expose un `kind` discriminant. Les erreurs qui possèdent un contexte supplémentaire conservent également les informations utiles à leur frontière : `status`, `statusText`, `method`, `url`, `data`, `resource` ou `operation` selon le cas.
+
+Lorsqu'une erreur technique connue est transformée, l'erreur d'origine est conservée dans `cause`.
+
+```text
+ZodError dans parseConfig()
+    → ConfigurationError
+        cause = ZodError
+
+ZodError dans initializeSettings()
+    → SettingsError
+        cause = ZodError
+
+TypeError réseau dans fetch()
+    → NetworkError
+        cause = TypeError
+
+SyntaxError dans response.json()
+    → ResponseParseError
+        cause = SyntaxError
+
+ZodError dans Serializer
+    → SerializationError
+        cause = ZodError
+```
+
+La règle générale est volontairement conservatrice :
+
+> **erreur comprise par la couche → erreur applicative typée ; erreur inattendue → propagation intacte.**
+
+Ainsi, une annulation `AbortError` n'est pas transformée en `NetworkError`, et une erreur inattendue pendant le parsing ou la sérialisation n'est pas artificiellement requalifiée.
+
+## Frontières HTTP et sérialisation
+
+```text
+fetch() échoue au niveau réseau
+    → NetworkError
+
+serveur répond 404 / 422 / 500
+    → ApiError
+
+serveur répond 200 + Content-Type JSON + JSON malformé
+    → ResponseParseError
+
+serveur répond un JSON valide mais incompatible avec la Resource
+    → SerializationError
+```
+
+`ApiError.data` reste volontairement `unknown`. `HttpClient` ne connaît pas les conventions d'un backend particulier, notamment la structure des erreurs de validation Laravel. Une interprétation métier éventuelle doit rester dans une couche supérieure.
 
 ---
 
@@ -674,15 +765,15 @@ Exemples actuels :
 
 - `Resource.test.ts` : comportement runtime des champs readonly/create/update ;
 - `Resource.types.test.ts` : contrat compile-time de `CreateData` / `UpdateData` ;
-- `Serializer.test.ts` : validation, sélection, partial, dates et tableaux ;
-- `HttpClient.test.ts` : transport HTTP ;
+- `Serializer.test.ts` : validation, sélection, partial, dates, tableaux et contrat de `SerializationError` ;
+- `HttpClient.test.ts` : transport HTTP, `ApiError`, `NetworkError`, `ResponseParseError`, préservation des annulations et propagation des erreurs inattendues ;
 - `ResourceApi.test.ts` : orchestration CRUD avec vraies routes et vrai Serializer, en contrôlant uniquement le transport ;
 - `ResourceQuery.test.ts` : query keys, délégation des reads/mutations, politique d’invalidation du cache et contrat de `invalidateResource()` ;
 - `ResourceService.test.tsx` : intégration React/TanStack de la façade CRUD ;
 - `ResourceService.types.test.ts` : conservation de l’inférence des payloads create/update à travers la factory ;
 - `NoteApi.test.ts` : contrat de l’opération métier `togglePinned`, endpoint spécifique, encodage de l’ID et désérialisation de la réponse ;
 - `note.service.test.tsx` : intégration React de `useTogglePinned()` et réutilisation de la politique d’invalidation de `ResourceQuery` ;
-- tests dédiés pour config, settings et utils.
+- tests dédiés pour config, settings et utils, notamment les contrats `ConfigurationError` et `SettingsError`.
 
 Éviter de retester dans une feature un comportement générique déjà garanti par `core`, sauf si la feature possède un contrat spécifique à protéger.
 
@@ -724,7 +815,10 @@ Feature Service
 Quelques conséquences :
 
 - `HttpClient` ne valide pas les Resources ;
+- `HttpClient` qualifie uniquement les erreurs propres à sa frontière (`NetworkError`, `ApiError`, `ResponseParseError`) ;
 - `Serializer` ne connaît pas HTTP ;
+- `Serializer` transforme uniquement les erreurs de validation qu'il comprend en `SerializationError` ;
+- les erreurs inattendues ne sont pas masquées par une erreur applicative générique ;
 - `ResourceRoutes` ne connaît pas l'origine de l'API ;
 - `ResourceApi` ne gère pas le cache ;
 - une opération métier spécifique peut étendre `ResourceApi` sans polluer le CRUD générique ;
@@ -1038,10 +1132,10 @@ Custom feature operation       ✓
 Shared cache invalidation      ✓
 Second resource integration    ✓
 Cache abstraction              → seulement si utile
-Errors                         → à concevoir
+Errors                         ✓
 Factory / génération           → plus tard
 Stabilisation V1               → après seconde feature métier significative
-Logs                      → futur
+Logs                      → prochain
 Authentication            → futur
 Notifications             → futur
 UI                        → futur
@@ -1051,7 +1145,6 @@ UI                        → futur
 
 Plusieurs sujets sont identifiés mais ne doivent pas être implémentés prématurément :
 
-- hiérarchie d'erreurs custom (`ApiError`, erreurs de configuration/sérialisation, etc.) ;
 - auth/interceptors ;
 - retry HTTP ;
 - réponses texte/blob ;

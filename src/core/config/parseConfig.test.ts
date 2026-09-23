@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { ZodError } from 'zod'
 
 import { parseConfig } from '@/core/config/parseConfig'
+import { ConfigurationError } from '@/core/error/ConfigurationError'
 
 describe('parseConfig', () => {
   const validApiUrl = 'http://localhost:3000'
@@ -28,25 +30,63 @@ describe('parseConfig', () => {
     })
   })
 
-  it('throws a readable error when a required variable is missing', () => {
-    expect(() => parseConfig({})).toThrow(/Application configuration is invalid/)
-    expect(() => parseConfig({})).toThrow(/API_URL/)
+  it('throws a ConfigurationError when a required variable is missing', () => {
+    expect.assertions(5)
+
+    try {
+      parseConfig({})
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigurationError)
+
+      if (!(error instanceof ConfigurationError)) {
+        throw error
+      }
+
+      expect(error.kind).toBe('configuration')
+      expect(error.message).toContain('Application configuration is invalid')
+      expect(error.message).toContain('API_URL')
+      expect(error.cause).toBeInstanceOf(ZodError)
+    }
   })
 
-  it('throws a readable error when API_URL is invalid', () => {
-    expect(() =>
+  it('throws a ConfigurationError when API_URL is invalid', () => {
+    expect.assertions(4)
+
+    try {
       parseConfig({
         VITE_API_URL: 'not-an-url',
-      }),
-    ).toThrow(/API_URL/)
+      })
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigurationError)
+
+      if (!(error instanceof ConfigurationError)) {
+        throw error
+      }
+
+      expect(error.kind).toBe('configuration')
+      expect(error.message).toContain('API_URL')
+      expect(error.cause).toBeInstanceOf(ZodError)
+    }
   })
 
-  it('throws when an unknown VITE variable is provided', () => {
-    expect(() =>
+  it('throws a ConfigurationError when an unknown VITE variable is provided', () => {
+    expect.assertions(4)
+
+    try {
       parseConfig({
         VITE_API_URL: validApiUrl,
         VITE_UNKNOWN: 'something',
-      }),
-    ).toThrow(/UNKNOWN/)
+      })
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigurationError)
+
+      if (!(error instanceof ConfigurationError)) {
+        throw error
+      }
+
+      expect(error.kind).toBe('configuration')
+      expect(error.message).toContain('UNKNOWN')
+      expect(error.cause).toBeInstanceOf(ZodError)
+    }
   })
 })

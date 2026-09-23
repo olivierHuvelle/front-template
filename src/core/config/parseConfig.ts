@@ -1,6 +1,7 @@
 import { ZodError } from 'zod'
 
 import { configSchema, type Config } from '@/core/config/config.schema'
+import { ConfigurationError } from '@/core/error/ConfigurationError'
 
 const VITE_PREFIX = 'VITE_'
 
@@ -22,7 +23,7 @@ export function parseConfig(rawEnv: Record<string, unknown>): Config {
         })
         .join('\n')
 
-      throw new Error(
+      throw new ConfigurationError(
         `Application configuration is invalid:\n${details}\n\nCheck your VITE_* environment variables.`,
         { cause: error },
       )

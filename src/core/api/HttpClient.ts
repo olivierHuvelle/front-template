@@ -1,4 +1,7 @@
 import { env } from '@/core/config/config'
+import { ApiError } from '@/core/error/ApiError'
+import { NetworkError } from '@/core/error/NetworkError'
+import { ResponseParseError } from '@/core/error/ResponseParseError'
 import { HTTP_METHOD, type HttpMethod } from '@/core/route/HttpMethod'
 
 export type HttpClientOptions = {
@@ -43,37 +46,79 @@ export class HttpClient {
     options: HttpRequestOptions = {},
     body?: unknown,
   ): Promise<unknown> {
-    const response = await fetch(this.buildUrl(url), {
-      method,
-      headers: {
-        ...(body !== undefined && {
-          'Content-Type': 'application/json',
-        }),
-        ...options.headers,
-      },
-      signal: options.signal,
-      ...(body !== undefined && {
-        body: JSON.stringify(body),
-      }),
-    })
+    const requestUrl = this.buildUrl(url)
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    let response: Response
+
+    try {
+      response = await fetch(requestUrl, {
+        method,
+        headers: {
+          ...(body !== undefined && {
+            'Content-Type': 'application/json',
+          }),
+          ...options.headers,
+        },
+        signal: options.signal,
+        ...(body !== undefined && {
+          body: JSON.stringify(body),
+        }),
+      })
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new NetworkError(`Network request failed: ${method} ${requestUrl}`, {
+          method,
+          url: requestUrl,
+          cause: error,
+        })
+      }
+
+      throw error
     }
 
+    if (!response.ok) {
+      const data = await this.readResponse(response, method, requestUrl)
+
+      throw new ApiError(`HTTP ${response.status}: ${response.statusText}`, {
+        status: response.status,
+        statusText: response.statusText,
+        method,
+        url: requestUrl,
+        data,
+      })
+    }
+
+    return this.readResponse(response, method, requestUrl)
+  }
+
+  private async readResponse(
+    response: Response,
+    method: HttpMethod,
+    url: string,
+  ): Promise<unknown> {
     if (response.status === 204) {
-      // TODO implement later on
       return undefined
     }
 
     const contentType = response.headers.get('content-type')
 
     if (!contentType?.includes('application/json')) {
-      // TODO implement later on
       return undefined
     }
 
-    return response.json()
+    try {
+      return await response.json()
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new ResponseParseError(`Failed to parse JSON response: ${method} ${url}`, {
+          method,
+          url,
+          cause: error,
+        })
+      }
+
+      throw error
+    }
   }
 
   private buildUrl(url: string): string {

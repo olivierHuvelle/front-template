@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { z } from 'zod'
+import { z, ZodError } from 'zod'
 
 import { Resource } from '@/core/resource/Resource'
 import { Serializer } from '@/core/serializer/Serializer'
+import { SerializationError } from '@/core/error/SerializationError'
 
 const schema = z.object({
   id: z.number(),
@@ -45,13 +46,27 @@ describe('Serializer', () => {
       expect(serializer.deserialize(data)).toEqual(data)
     })
 
-    it('throws when data is invalid', () => {
-      expect(() =>
+    it('throws a SerializationError when data is invalid', () => {
+      expect.assertions(6)
+
+      try {
         serializer.deserialize({
           ...createValidData(),
           id: 'invalid',
-        }),
-      ).toThrow()
+        })
+      } catch (error) {
+        expect(error).toBeInstanceOf(SerializationError)
+
+        if (!(error instanceof SerializationError)) {
+          throw error
+        }
+
+        expect(error.kind).toBe('serialization')
+        expect(error.operation).toBe('deserialize')
+        expect(error.resource).toBe('test')
+        expect(error.message).toBe('Failed to deserialize resource "test"')
+        expect(error.cause).toBeInstanceOf(ZodError)
+      }
     })
 
     it('deserializes ISO date strings to dates', () => {
@@ -122,6 +137,37 @@ describe('Serializer', () => {
         ]),
       ).toThrow()
     })
+
+    it('preserves the invalid resource path when deserializing multiple resources', () => {
+      expect.assertions(6)
+
+      try {
+        serializer.deserializeMany([
+          createValidData(),
+          {
+            ...createValidData(),
+            id: 'invalid',
+          },
+        ])
+      } catch (error) {
+        expect(error).toBeInstanceOf(SerializationError)
+
+        if (!(error instanceof SerializationError)) {
+          throw error
+        }
+
+        expect(error.kind).toBe('serialization')
+        expect(error.operation).toBe('deserialize')
+        expect(error.resource).toBe('test')
+        expect(error.cause).toBeInstanceOf(ZodError)
+
+        if (!(error.cause instanceof ZodError)) {
+          throw error.cause
+        }
+
+        expect(error.cause.issues[0]?.path).toEqual([1, 'id'])
+      }
+    })
   })
 
   describe('serialize', () => {
@@ -144,13 +190,27 @@ describe('Serializer', () => {
       })
     })
 
-    it('throws when a complete resource is invalid', () => {
-      expect(() =>
+    it('throws a SerializationError when a complete resource is invalid', () => {
+      expect.assertions(6)
+
+      try {
         serializer.serialize({
           ...createValidData(),
           active: 'invalid',
-        }),
-      ).toThrow()
+        })
+      } catch (error) {
+        expect(error).toBeInstanceOf(SerializationError)
+
+        if (!(error instanceof SerializationError)) {
+          throw error
+        }
+
+        expect(error.kind).toBe('serialization')
+        expect(error.operation).toBe('serialize')
+        expect(error.resource).toBe('test')
+        expect(error.message).toBe('Failed to serialize resource "test"')
+        expect(error.cause).toBeInstanceOf(ZodError)
+      }
     })
 
     it('serializes only selected fields', () => {

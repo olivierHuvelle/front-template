@@ -1,5 +1,6 @@
-import { z, type ZodRawShape } from 'zod'
+import { z, ZodError, type ZodRawShape } from 'zod'
 
+import { SerializationError } from '@/core/error/SerializationError'
 import type { FieldSelection } from '@/core/resource/FieldSelection'
 import type { Resource } from '@/core/resource/Resource'
 import { DateUtils } from '@/core/utils/DateUtils'
@@ -26,20 +27,41 @@ export class Serializer<TShape extends ZodRawShape> {
   }
 
   public deserialize(data: unknown): ResourceData<TShape> {
-    return this.resource.schema.parse(data)
+    try {
+      return this.resource.schema.parse(data)
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw new SerializationError(`Failed to deserialize resource "${this.resource.name}"`, {
+          resource: this.resource.name,
+          operation: 'deserialize',
+          cause: error,
+        })
+      }
+
+      throw error
+    }
   }
 
   public deserializeMany(data: unknown): ResourceData<TShape>[] {
-    return z.array(this.resource.schema).parse(data)
+    try {
+      return z.array(this.resource.schema).parse(data)
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw new SerializationError(`Failed to deserialize resource "${this.resource.name}"`, {
+          resource: this.resource.name,
+          operation: 'deserialize',
+          cause: error,
+        })
+      }
+
+      throw error
+    }
   }
 
   public serialize(
     data: unknown,
     options: SerializeOptions<keyof TShape> = {},
   ): Partial<Serialized<ResourceData<TShape>>> {
-    // IDEA: SchemaUtils.omit(schema, fields), SchemaUtils.pick(schema, fields)
-    // IDEA: add custom errors
-
     if (options.only) {
       const shape = Object.fromEntries(
         options.only.map((field) => [field, this.resource.schema.shape[field]]),
@@ -62,9 +84,17 @@ export class Serializer<TShape extends ZodRawShape> {
       return this.serializeShape(data, this.resource.schema.shape, true)
     }
 
-    const validatedData = this.resource.schema.parse(data)
+    try {
+      const validatedData = this.resource.schema.parse(data)
 
-    return this.serializeValue(validatedData) as Serialized<ResourceData<TShape>>
+      return this.serializeValue(validatedData) as Serialized<ResourceData<TShape>>
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw this.createSerializationError(error)
+      }
+
+      throw error
+    }
   }
 
   private serializeShape(
@@ -74,9 +104,18 @@ export class Serializer<TShape extends ZodRawShape> {
   ): Partial<Serialized<ResourceData<TShape>>> {
     const schema = z.object(shape)
     const validationSchema = partial ? schema.partial() : schema
-    const validatedData = validationSchema.parse(data)
 
-    return this.serializeValue(validatedData) as Partial<Serialized<ResourceData<TShape>>>
+    try {
+      const validatedData = validationSchema.parse(data)
+
+      return this.serializeValue(validatedData) as Partial<Serialized<ResourceData<TShape>>>
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw this.createSerializationError(error)
+      }
+
+      throw error
+    }
   }
 
   private serializeValue(value: unknown): unknown {
@@ -95,5 +134,13 @@ export class Serializer<TShape extends ZodRawShape> {
     }
 
     return value
+  }
+
+  private createSerializationError(cause: ZodError): SerializationError {
+    return new SerializationError(`Failed to serialize resource "${this.resource.name}"`, {
+      resource: this.resource.name,
+      operation: 'serialize',
+      cause,
+    })
   }
 }

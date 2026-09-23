@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { ZodError } from 'zod'
 
+import { SettingsError } from '@/core/error/SettingsError'
 import { getSettings, initializeSettings } from '@/core/settings/settings'
 
 describe('settings', () => {
@@ -39,22 +41,70 @@ describe('settings', () => {
     })
   })
 
-  it('throws when settings contain an unknown property', () => {
-    expect(() =>
+  it('throws a SettingsError when settings contain an unknown property', () => {
+    expect.assertions(4)
+
+    try {
       initializeSettings({
         // @ts-expect-error testing runtime validation
         unknown: true,
-      }),
-    ).toThrow()
+      })
+    } catch (error) {
+      expect(error).toBeInstanceOf(SettingsError)
+
+      if (!(error instanceof SettingsError)) {
+        throw error
+      }
+
+      expect(error.kind).toBe('settings')
+      expect(error.message).toContain('Application settings are invalid')
+      expect(error.cause).toBeInstanceOf(ZodError)
+    }
   })
 
-  it('throws when a setting is invalid', () => {
-    expect(() =>
+  it('throws a SettingsError when a setting is invalid', () => {
+    expect.assertions(5)
+
+    try {
       initializeSettings({
         date: {
           format: '',
         },
-      }),
-    ).toThrow()
+      })
+    } catch (error) {
+      expect(error).toBeInstanceOf(SettingsError)
+
+      if (!(error instanceof SettingsError)) {
+        throw error
+      }
+
+      expect(error.kind).toBe('settings')
+      expect(error.message).toContain('Application settings are invalid')
+      expect(error.message).toContain('date.format')
+      expect(error.cause).toBeInstanceOf(ZodError)
+    }
+  })
+
+  it('throws a SettingsError when dateTimeFormat is invalid', () => {
+    expect.assertions(5)
+
+    try {
+      initializeSettings({
+        date: {
+          dateTimeFormat: '',
+        },
+      })
+    } catch (error) {
+      expect(error).toBeInstanceOf(SettingsError)
+
+      if (!(error instanceof SettingsError)) {
+        throw error
+      }
+
+      expect(error.kind).toBe('settings')
+      expect(error.message).toContain('Application settings are invalid')
+      expect(error.message).toContain('date.dateTimeFormat')
+      expect(error.cause).toBeInstanceOf(ZodError)
+    }
   })
 })

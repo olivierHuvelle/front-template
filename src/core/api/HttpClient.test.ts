@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HttpClient } from '@/core/api/HttpClient'
 import { initializeConfig } from '@/core/config/config'
 import { HTTP_METHOD } from '@/core/route/HttpMethod'
+import { ApiError } from '@/core/error/ApiError'
+import { NetworkError } from '@/core/error/NetworkError'
+import { ResponseParseError } from '@/core/error/ResponseParseError'
 
 const BASE_URL = 'http://localhost:3000'
 
@@ -201,7 +204,7 @@ describe('HttpClient', () => {
     expect(result).toBeUndefined()
   })
 
-  it('throws when the response is not successful', async () => {
+  it('throws an ApiError when the response is not successful', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ message: 'Not found' }), {
         status: 404,
@@ -212,7 +215,146 @@ describe('HttpClient', () => {
       }),
     )
 
-    await expect(client.get('/todos/999')).rejects.toThrow('HTTP 404: Not Found')
+    expect.assertions(8)
+
+    try {
+      await client.get('/todos/999')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError)
+
+      if (!(error instanceof ApiError)) {
+        throw error
+      }
+
+      expect(error.kind).toBe('api')
+      expect(error.status).toBe(404)
+      expect(error.statusText).toBe('Not Found')
+      expect(error.method).toBe(HTTP_METHOD.GET)
+      expect(error.url).toBe(`${BASE_URL}/todos/999`)
+      expect(error.data).toEqual({
+        message: 'Not found',
+      })
+      expect(error.message).toBe('HTTP 404: Not Found')
+    }
+  })
+
+  it('preserves the API error response body', async () => {
+    const data = {
+      message: 'The given data was invalid.',
+      errors: {
+        title: ['The title field is required.'],
+      },
+    }
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(data), {
+        status: 422,
+        statusText: 'Unprocessable Content',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }),
+    )
+
+    expect.assertions(3)
+
+    try {
+      await client.post('/todos', {})
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError)
+
+      if (!(error instanceof ApiError)) {
+        throw error
+      }
+
+      expect(error.status).toBe(422)
+      expect(error.data).toEqual(data)
+    }
+  })
+
+  it('throws a ResponseParseError when a JSON response is malformed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"id": 1', {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }),
+    )
+
+    expect.assertions(6)
+
+    try {
+      await client.get('/todos/1')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ResponseParseError)
+
+      if (!(error instanceof ResponseParseError)) {
+        throw error
+      }
+
+      expect(error.kind).toBe('response-parse')
+      expect(error.method).toBe(HTTP_METHOD.GET)
+      expect(error.url).toBe(`${BASE_URL}/todos/1`)
+      expect(error.message).toBe(`Failed to parse JSON response: GET ${BASE_URL}/todos/1`)
+      expect(error.cause).toBeInstanceOf(SyntaxError)
+    }
+  })
+
+  it('preserves unexpected response parsing errors', async () => {
+    const unexpectedError = new Error('Unexpected parsing failure')
+
+    const response = new Response('{}', {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+    vi.spyOn(response, 'json').mockRejectedValue(unexpectedError)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response)
+
+    await expect(client.get('/todos/1')).rejects.toBe(unexpectedError)
+  })
+
+  it('throws a NetworkError when fetch fails with a network error', async () => {
+    const cause = new TypeError('Failed to fetch')
+
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(cause)
+
+    expect.assertions(6)
+
+    try {
+      await client.get('/todos')
+    } catch (error) {
+      expect(error).toBeInstanceOf(NetworkError)
+
+      if (!(error instanceof NetworkError)) {
+        throw error
+      }
+
+      expect(error.kind).toBe('network')
+      expect(error.method).toBe(HTTP_METHOD.GET)
+      expect(error.url).toBe(`${BASE_URL}/todos`)
+      expect(error.message).toBe(`Network request failed: GET ${BASE_URL}/todos`)
+      expect(error.cause).toBe(cause)
+    }
+  })
+
+  it('preserves AbortError when the request is aborted', async () => {
+    const abortError = new DOMException('The operation was aborted.', 'AbortError')
+
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(abortError)
+
+    await expect(client.get('/todos')).rejects.toBe(abortError)
+  })
+
+  it('preserves unexpected fetch errors', async () => {
+    const unexpectedError = new Error('Unexpected internal failure')
+
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(unexpectedError)
+
+    await expect(client.get('/todos')).rejects.toBe(unexpectedError)
   })
 
   it('does not require config during construction', () => {
