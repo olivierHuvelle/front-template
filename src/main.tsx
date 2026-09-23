@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { bootstrapApplication } from '@/core/bootstrap/bootstrapApplication.ts'
 
 import './index.css'
-import App from './App.tsx'
+import { App } from '@/App.tsx'
 
 bootstrapApplication()
 
