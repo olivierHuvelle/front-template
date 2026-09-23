@@ -23,7 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 
-# OTHER
+# CUSTOM
 *.md
 !README.md
+.env
+
 
