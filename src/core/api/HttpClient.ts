@@ -2,10 +2,13 @@ import { env } from '@/core/config/config'
 import { ApiError } from '@/core/error/ApiError'
 import { NetworkError } from '@/core/error/NetworkError'
 import { ResponseParseError } from '@/core/error/ResponseParseError'
+import type { Logger } from '@/core/logger/Logger'
+import { getLogger } from '@/core/logger/loggerRegistry'
 import { HTTP_METHOD, type HttpMethod } from '@/core/route/HttpMethod'
 
 export type HttpClientOptions = {
   baseUrl?: string
+  logger?: Logger
 }
 
 export type HttpRequestOptions = {
@@ -15,9 +18,11 @@ export type HttpRequestOptions = {
 
 export class HttpClient {
   private readonly baseUrl?: string
+  private readonly logger?: Logger
 
   constructor(options: HttpClientOptions = {}) {
     this.baseUrl = options.baseUrl
+    this.logger = options.logger
   }
 
   public get(url: string, options?: HttpRequestOptions): Promise<unknown> {
@@ -47,6 +52,13 @@ export class HttpClient {
     body?: unknown,
   ): Promise<unknown> {
     const requestUrl = this.buildUrl(url)
+    const logger = this.logger ?? getLogger()
+    const startedAt = performance.now()
+
+    logger.debug('HTTP request started', {
+      method,
+      url: requestUrl,
+    })
 
     let response: Response
 
@@ -75,6 +87,13 @@ export class HttpClient {
 
       throw error
     }
+
+    logger.debug('HTTP request completed', {
+      method,
+      url: requestUrl,
+      status: response.status,
+      durationMs: performance.now() - startedAt,
+    })
 
     if (!response.ok) {
       const data = await this.readResponse(response, method, requestUrl)

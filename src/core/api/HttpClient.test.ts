@@ -2,12 +2,27 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { HttpClient } from '@/core/api/HttpClient'
 import { initializeConfig } from '@/core/config/config'
-import { HTTP_METHOD } from '@/core/route/HttpMethod'
 import { ApiError } from '@/core/error/ApiError'
 import { NetworkError } from '@/core/error/NetworkError'
 import { ResponseParseError } from '@/core/error/ResponseParseError'
+import type { Logger } from '@/core/logger/Logger'
+import { getLogger } from '@/core/logger/loggerRegistry'
+import { HTTP_METHOD } from '@/core/route/HttpMethod'
+
+vi.mock('@/core/logger/loggerRegistry', () => ({
+  getLogger: vi.fn(),
+}))
 
 const BASE_URL = 'http://localhost:3000'
+
+const loggerMock = {
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+} satisfies Logger
+
+vi.mocked(getLogger).mockReturnValue(loggerMock)
 
 const client = new HttpClient({
   baseUrl: BASE_URL,
@@ -18,6 +33,7 @@ const url = (path: string): string => `${BASE_URL}${path}`
 describe('HttpClient', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    loggerMock.debug.mockClear()
   })
 
   it('sends a GET request', async () => {
@@ -364,6 +380,7 @@ describe('HttpClient', () => {
   it('resolves the configured base URL when making a request', async () => {
     initializeConfig({
       VITE_API_URL: 'http://localhost:8000/api',
+      VITE_LOG_LEVEL: 'debug',
     })
 
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -372,7 +389,9 @@ describe('HttpClient', () => {
       }),
     )
 
-    const configuredClient = new HttpClient()
+    const configuredClient = new HttpClient({
+      logger: loggerMock,
+    })
 
     await configuredClient.get('/todos')
 
@@ -382,5 +401,58 @@ describe('HttpClient', () => {
         method: HTTP_METHOD.GET,
       }),
     )
+  })
+
+  it('logs when an HTTP request starts', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, {
+        status: 204,
+      }),
+    )
+
+    await client.get('/todos')
+
+    expect(loggerMock.debug).toHaveBeenCalledWith('HTTP request started', {
+      method: HTTP_METHOD.GET,
+      url: `${BASE_URL}/todos`,
+    })
+  })
+
+  it('logs when an HTTP request completes', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, {
+        status: 204,
+      }),
+    )
+
+    await client.get('/todos')
+
+    expect(loggerMock.debug).toHaveBeenCalledWith('HTTP request completed', {
+      method: HTTP_METHOD.GET,
+      url: `${BASE_URL}/todos`,
+      status: 204,
+      durationMs: expect.any(Number),
+    })
+  })
+
+  it('logs completed requests even when the API response is unsuccessful', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ message: 'Not found' }), {
+        status: 404,
+        statusText: 'Not Found',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }),
+    )
+
+    await expect(client.get('/todos/999')).rejects.toBeInstanceOf(ApiError)
+
+    expect(loggerMock.debug).toHaveBeenCalledWith('HTTP request completed', {
+      method: HTTP_METHOD.GET,
+      url: `${BASE_URL}/todos/999`,
+      status: 404,
+      durationMs: expect.any(Number),
+    })
   })
 })

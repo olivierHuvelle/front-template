@@ -12,6 +12,8 @@ La chaîne `Resource → ResourceRoutes → Serializer → ResourceApi → HttpC
 
 La gestion structurée des erreurs est également en place. Le core distingue désormais les erreurs de configuration, de settings, de transport réseau, de réponse HTTP, de parsing de réponse et de sérialisation, tout en conservant l'erreur d'origine via `cause` lorsqu'elle est connue.
 
+La journalisation structurée est également intégrée. Le core expose un contrat `Logger` indépendant de l'implémentation concrète, avec une implémentation basée sur Pino. Le niveau de log est configurable par environnement et `HttpClient` journalise les requêtes HTTP en `debug` avec leur méthode, URL, statut et durée.
+
 **TanStack Query est intégré** via `ResourceQuery`. Les lectures `getAll` / `get`, les mutations `create` / `update` / `delete`, les query keys, la propagation de `AbortSignal` et les règles d’invalidation du cache ont été validées contre l’API Laravel de référence et couvertes par des tests.
 
 La couche **Service est en place** via `createResourceService()`. Elle constitue la façade React générique d’une feature : les composants utilisent par exemple `todoService.useGetAll()`, `useGet()`, `useCreate()`, `useUpdate()` et `useDelete()` sans importer directement TanStack Query, `ResourceQuery` ou `ResourceApi`.
@@ -72,6 +74,11 @@ src/
 │   │   ├── ResponseParseError.ts
 │   │   ├── SerializationError.ts
 │   │   └── SettingsError.ts
+│   ├── logger/
+│   │   ├── Logger.ts
+│   │   ├── LogLevel.ts
+│   │   ├── PinoLogger.ts
+│   │   └── loggerRegistry.ts
 │   ├── query/
 │   │   └── ResourceQuery.ts
 │   ├── resource/
@@ -441,17 +448,27 @@ Le projet distingue deux concepts.
 
 `core/config` gère les valeurs qui changent selon l'environnement d'exécution.
 
-Le schéma actuel contient :
+Le schéma actuel contient notamment :
 
 ```ts
 API_URL: z.url()
+LOG_LEVEL: logLevelSchema
 ```
 
-Dans Vite, la variable correspondante est :
+Les niveaux de log supportés sont :
+
+```text
+trace | debug | info | warn | error | fatal | silent
+```
+
+Dans Vite, les variables correspondantes sont par exemple :
 
 ```dotenv
 VITE_API_URL=http://localhost:3000
+VITE_LOG_LEVEL=debug
 ```
+
+`LOG_LEVEL` contrôle le niveau minimal transmis par le logger. `silent` permet de désactiver complètement la journalisation.
 
 `parseConfig()` :
 
@@ -479,15 +496,18 @@ Les overrides sont validés puis fusionnés profondément avec les valeurs par d
 
 ## Bootstrap
 
-`bootstrapApplication()` initialise actuellement :
+`bootstrapApplication()` initialise les dépendances globales du core dans l'ordre nécessaire :
 
 ```text
 bootstrapApplication()
     ├── initializeConfig()
+    ├── initializeLogger()
     └── initializeSettings()
 ```
 
-Il est appelé dans `main.tsx` **avant le render React** afin que les services qui dépendent de la configuration puissent être utilisés ensuite en sécurité.
+La configuration est initialisée avant le logger afin que celui-ci puisse utiliser le niveau défini par `LOG_LEVEL`.
+
+Le bootstrap est appelé dans `main.tsx` **avant le render React** afin que les services qui dépendent de ces éléments puissent ensuite être utilisés en sécurité.
 
 ---
 
@@ -565,6 +585,69 @@ serveur répond un JSON valide mais incompatible avec la Resource
 
 ---
 
+# Logging
+
+Le core fournit une abstraction légère de journalisation afin que le code applicatif ne dépende pas directement d'une librairie de logging.
+
+```text
+HttpClient ──→ Logger ←── PinoLogger ──→ Pino
+```
+
+## `Logger` et `PinoLogger`
+
+`Logger` constitue le contrat utilisé par le reste du core. `PinoLogger` est son implémentation concrète actuelle. Pino reste ainsi un détail d'infrastructure : les consommateurs dépendent du contrat `Logger`, pas directement de la librairie.
+
+Cette séparation permet de remplacer l'implémentation sans modifier les consommateurs et d'injecter facilement un logger contrôlé dans les tests.
+
+## Logger global et injection
+
+Le logger applicatif est enregistré lors du bootstrap et peut être récupéré via le registry du core. Les classes qui en ont besoin peuvent néanmoins accepter explicitement un `Logger`, notamment `HttpClient`.
+
+```text
+new HttpClient()
+    → getLogger()
+    → logger applicatif
+
+new HttpClient({ logger })
+    → logger injecté
+```
+
+L'injection est particulièrement utile pour les tests sans imposer la création manuelle du logger dans l'utilisation normale.
+
+## Logging HTTP
+
+`HttpClient` journalise actuellement le cycle d'une requête au niveau `debug`.
+
+```text
+HTTP request started
+    method
+    url
+
+HTTP request completed
+    method
+    url
+    status
+    durationMs
+```
+
+Une réponse HTTP non successful est elle aussi une requête terminée : son statut est journalisé avant que `HttpClient` ne produise un `ApiError`.
+
+Les erreurs ne sont volontairement pas journalisées automatiquement avec `logger.error()` dans `HttpClient`. La couche HTTP qualifie et propage les erreurs qu'elle comprend ; le choix du niveau auquel une erreur doit être journalisée reste séparé afin d'éviter les logs dupliqués dans les couches supérieures.
+
+Les bodies et headers ne sont pas journalisés automatiquement afin de limiter le bruit et le risque d'exposer des données sensibles.
+
+## Niveau de log
+
+Le niveau est fourni par la configuration d'environnement :
+
+```dotenv
+VITE_LOG_LEVEL=debug
+```
+
+Valeurs supportées : `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `silent`.
+
+---
+
 # Utilitaires
 
 ## `DateUtils`
@@ -608,7 +691,7 @@ Créer ensuite le fichier d'environnement local à partir de l'exemple :
 cp .env.example .env
 ```
 
-Puis adapter `VITE_API_URL` au backend utilisé.
+Puis adapter `VITE_API_URL` au backend utilisé et `VITE_LOG_LEVEL` au niveau de journalisation souhaité.
 
 Démarrage :
 
@@ -766,7 +849,7 @@ Exemples actuels :
 - `Resource.test.ts` : comportement runtime des champs readonly/create/update ;
 - `Resource.types.test.ts` : contrat compile-time de `CreateData` / `UpdateData` ;
 - `Serializer.test.ts` : validation, sélection, partial, dates, tableaux et contrat de `SerializationError` ;
-- `HttpClient.test.ts` : transport HTTP, `ApiError`, `NetworkError`, `ResponseParseError`, préservation des annulations et propagation des erreurs inattendues ;
+- `HttpClient.test.ts` : transport HTTP, logging des requêtes, `ApiError`, `NetworkError`, `ResponseParseError`, préservation des annulations et propagation des erreurs inattendues ;
 - `ResourceApi.test.ts` : orchestration CRUD avec vraies routes et vrai Serializer, en contrôlant uniquement le transport ;
 - `ResourceQuery.test.ts` : query keys, délégation des reads/mutations, politique d’invalidation du cache et contrat de `invalidateResource()` ;
 - `ResourceService.test.tsx` : intégration React/TanStack de la façade CRUD ;
@@ -1135,7 +1218,7 @@ Cache abstraction              → seulement si utile
 Errors                         ✓
 Factory / génération           → plus tard
 Stabilisation V1               → après seconde feature métier significative
-Logs                      → prochain
+Logs                      ✓
 Authentication            → futur
 Notifications             → futur
 UI                        → futur
@@ -1148,7 +1231,6 @@ Plusieurs sujets sont identifiés mais ne doivent pas être implémentés préma
 - auth/interceptors ;
 - retry HTTP ;
 - réponses texte/blob ;
-- logger ;
 - abstraction de cache ;
 - options supplémentaires du Serializer ;
 - helpers éventuels de schéma (`pick` / `omit`) ;
