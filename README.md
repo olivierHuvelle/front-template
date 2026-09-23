@@ -10,13 +10,15 @@ L'objectif n'est pas de recréer un framework généraliste, mais de fournir une
 
 La chaîne `Resource → ResourceRoutes → Serializer → ResourceApi → HttpClient` est en place et testée. La configuration, les settings, le bootstrap et les utilitaires de base sont également disponibles.
 
-**TanStack Query est maintenant intégré** via `ResourceQuery`. Les lectures `getAll` / `get`, les mutations `create` / `update` / `delete`, les query keys, la propagation de `AbortSignal` et les règles d’invalidation du cache ont été validées contre l’API Laravel de référence et couvertes par des tests.
+**TanStack Query est intégré** via `ResourceQuery`. Les lectures `getAll` / `get`, les mutations `create` / `update` / `delete`, les query keys, la propagation de `AbortSignal` et les règles d’invalidation du cache ont été validées contre l’API Laravel de référence et couvertes par des tests.
 
-La prochaine étape prévue est la couche **Service**, destinée à devenir l’API applicative exposée aux composants React et à masquer l’utilisation directe de `useQuery`, `useMutation` et `useQueryClient`.
+La couche **Service est maintenant en place** via `createResourceService()`. Elle constitue la façade React d’une feature : les composants utilisent par exemple `todoService.useGetAll()`, `useGet()`, `useCreate()`, `useUpdate()` et `useDelete()` sans importer directement TanStack Query, `ResourceQuery` ou `ResourceApi`. Le typage dérivé de la `Resource` est conservé jusqu’aux variables des mutations.
 
 ```mermaid
 flowchart LR
-    UI[React / Feature] --> Q[ResourceQuery]
+    UI[React Component] --> S[Feature Service]
+    S --> RS[createResourceService]
+    RS --> Q[ResourceQuery]
     Q --> TQ[TanStack Query]
     Q --> API[ResourceApi]
     TQ --> Cache[(Query cache)]
@@ -57,6 +59,8 @@ src/
 │   │   ├── FieldSelection.ts
 │   │   ├── Resource.ts
 │   │   └── ResourceData.ts
+│   ├── service/
+│   │   └── ResourceService.ts
 │   ├── route/
 │   │   ├── HttpMethod.ts
 │   │   ├── ResourceRoute.ts
@@ -664,6 +668,8 @@ Exemples actuels :
 - `HttpClient.test.ts` : transport HTTP ;
 - `ResourceApi.test.ts` : orchestration CRUD avec vraies routes et vrai Serializer, en contrôlant uniquement le transport ;
 - `ResourceQuery.test.ts` : query keys, délégation des reads/mutations et politique d’invalidation du cache ;
+- `ResourceService.test.tsx` : intégration React/TanStack de la façade CRUD ;
+- `ResourceService.types.test.ts` : conservation de l’inférence des payloads create/update à travers la factory ;
 - tests dédiés pour config, settings et utils.
 
 Éviter de retester dans une feature un comportement générique déjà garanti par `core`, sauf si la feature possède un contrat spécifique à protéger.
@@ -695,8 +701,11 @@ ResourceApi
 ResourceQuery / TanStack Query
   query keys, server state, cache, mutations et invalidation
 
-Service (prochaine étape)
-  façade applicative destinée aux composants et comportement métier
+ResourceService
+  façade React générique exposant les hooks CRUD aux composants
+
+Feature Service
+  point d’entrée unique d’une feature, extensible avec du comportement métier
 ```
 
 Quelques conséquences :
@@ -831,22 +840,74 @@ Les relations entre ressources, agrégats et invalidations via socket sont volon
 
 Le flux a été validé contre l’API Laravel de référence : chargement de liste, chargement d’un record, création, modification et suppression. Les invalidations provoquent les refetch attendus sans état local manuel (`setTodos`, `useEffect`, etc.).
 
-## Direction Service
+## Service et façade de feature
 
-L’objectif final reste que les composants n’interagissent pas directement avec TanStack Query. La prochaine couche envisagée est une façade `ResourceService` :
+`createResourceService()` adapte un `ResourceApi` / `ResourceQuery` aux hooks React et fournit la façade CRUD générique destinée aux composants. Il s’agit volontairement d’une **factory fonctionnelle**, et non d’une classe : les hooks React doivent être appelés depuis des fonctions/hooks conformes aux Rules of Hooks.
 
 ```text
 Component
     ↓
-ResourceService
-   /          \
-  ↓            ↓
-ResourceQuery  ResourceApi
-      ↓
-TanStack Query
+todoService
+    ↓
+createResourceService()
+    ↓
+ResourceQuery
+    ↓
+ResourceApi
+    ↓
+HttpClient
+    ↓
+Backend
 ```
 
-Le Service pourra exposer les hooks/opérations applicatives tout en laissant `ResourceQuery` responsable des conventions de cache. Il ne devra pas devenir un simple wrapper répétitif : une ressource CRUD standard doit nécessiter le moins possible de boilerplate spécifique.
+Pour une feature CRUD standard :
+
+```ts
+const todoApi = new ResourceApi(todoResource)
+
+export const todoService = createResourceService(todoApi)
+```
+
+Le composant ne connaît alors que la façade de la feature :
+
+```ts
+const todos = todoService.useGetAll()
+const todo = todoService.useGet(1)
+
+const createTodo = todoService.useCreate()
+const updateTodo = todoService.useUpdate()
+const deleteTodo = todoService.useDelete()
+```
+
+Il n’importe directement ni `useQuery`, ni `useMutation`, ni `useQueryClient`, ni `ResourceQuery`, ni `ResourceApi`. Le service devient ainsi le point d’entrée public de la feature côté composant.
+
+### Conservation du typage
+
+La factory conserve l’inférence construite depuis la `Resource` :
+
+```text
+Resource
+   ↓
+CreateData / UpdateData
+   ↓
+ResourceApi
+   ↓
+ResourceQuery
+   ↓
+createResourceService()
+   ↓
+useCreate() / useUpdate()
+   ↓
+mutate(...)
+```
+
+Un champ readonly tel que `id` reste donc interdit dans le payload d’un create ou dans `data` d’un update. Ce contrat est protégé par des tests de types dédiés.
+
+### Extension métier
+
+Une feature pourra enrichir sa façade avec des opérations spécifiques sans obliger le composant à connaître une seconde couche. Les opérations utilisant des hooks React devront suivre les Rules of Hooks et être nommées `use...`; la logique pure pourra être exposée comme fonction normale.
+
+La V1 reste volontairement minimale : le Service ne doit pas dupliquer les responsabilités de `ResourceQuery` ou `ResourceApi`.
 
 ---
 
@@ -866,11 +927,12 @@ API backend de référence  ✓
 ResourceApi               ✓
 TanStack Query            ✓
 ResourceQuery             ✓
+ResourceService           ✓
+CRUD via feature service  ✓
 Cache abstraction         → seulement si utile
 Errors                    → à concevoir
-ResourceService           → prochaine étape
 Factory / génération      → plus tard
-Stabilisation V1          → après intégration réelle
+Stabilisation V1          → après seconde feature réelle
 Logs                      → futur
 Authentication            → futur
 Notifications             → futur
