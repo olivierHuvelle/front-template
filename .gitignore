@@ -24,8 +24,7 @@ dist-ssr
 *.sw?
 
 # CUSTOM
-*.md
-!README.md
+TODO.md
 .env
 
 
