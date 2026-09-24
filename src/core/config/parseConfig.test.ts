@@ -16,8 +16,28 @@ describe('parseConfig', () => {
 
     expect(config).toEqual({
       API_URL: validApiUrl,
+      API_BACKEND: 'generic',
       LOG_LEVEL: validLogLevel,
     })
+  })
+
+  it('uses generic as the default API backend', () => {
+    const config = parseConfig({
+      VITE_API_URL: validApiUrl,
+      VITE_LOG_LEVEL: validLogLevel,
+    })
+
+    expect(config.API_BACKEND).toBe('generic')
+  })
+
+  it('parses a configured API backend', () => {
+    const config = parseConfig({
+      VITE_API_URL: validApiUrl,
+      VITE_API_BACKEND: 'laravel',
+      VITE_LOG_LEVEL: validLogLevel,
+    })
+
+    expect(config.API_BACKEND).toBe('laravel')
   })
 
   it('ignores non-VITE environment variables', () => {
@@ -31,6 +51,7 @@ describe('parseConfig', () => {
 
     expect(config).toEqual({
       API_URL: validApiUrl,
+      API_BACKEND: 'generic',
       LOG_LEVEL: validLogLevel,
     })
   })
@@ -101,6 +122,28 @@ describe('parseConfig', () => {
 
       expect(error.kind).toBe('configuration')
       expect(error.message).toContain('LOG_LEVEL')
+      expect(error.cause).toBeInstanceOf(ZodError)
+    }
+  })
+
+  it('throws a ConfigurationError when API_BACKEND is invalid', () => {
+    expect.assertions(4)
+
+    try {
+      parseConfig({
+        VITE_API_URL: validApiUrl,
+        VITE_API_BACKEND: 'whatever',
+        VITE_LOG_LEVEL: validLogLevel,
+      })
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigurationError)
+
+      if (!(error instanceof ConfigurationError)) {
+        throw error
+      }
+
+      expect(error.kind).toBe('configuration')
+      expect(error.message).toContain('API_BACKEND')
       expect(error.cause).toBeInstanceOf(ZodError)
     }
   })

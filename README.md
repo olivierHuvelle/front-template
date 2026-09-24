@@ -558,6 +558,7 @@ Le schéma actuel contient notamment :
 ```ts
 API_URL: z.url()
 LOG_LEVEL: logLevelSchema
+API_BACKEND = generic | laravel
 ```
 
 Les niveaux de log supportés sont :
@@ -571,6 +572,7 @@ Dans Vite, les variables correspondantes sont par exemple :
 ```dotenv
 VITE_API_URL=http://localhost:3000
 VITE_LOG_LEVEL=debug
+API_BACKEND=generic
 ```
 
 `LOG_LEVEL` contrôle le niveau minimal transmis par le logger. `silent` permet de désactiver complètement la journalisation.

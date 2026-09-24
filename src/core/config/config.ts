@@ -9,7 +9,6 @@ export function initializeConfig(rawEnv: Record<string, unknown> = import.meta.e
 }
 
 export function env<TKey extends keyof Config>(key: TKey): Config[TKey] {
-  // IDEA : custom errors +- dedicated file
   if (!config) {
     throw new Error('Config has not been initialized')
   }
