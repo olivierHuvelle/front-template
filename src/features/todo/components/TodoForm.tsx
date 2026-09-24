@@ -1,5 +1,4 @@
 import { useAppForm } from '@/components/form/useAppForm'
-import { Button } from '@/components/ui/button'
 import { todoResource } from '@/features/todo/todo.resource'
 import { todoService } from '@/features/todo/todo.service'
 
@@ -30,30 +29,28 @@ export function TodoForm({ onSuccess }: TodoFormProps) {
   })
 
   return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault()
-        void form.handleSubmit()
-      }}
-      className="space-y-4"
-    >
-      <form.AppField name="title" children={(field) => <TextField field={field} label="Title" />} />
+    <form.AppForm>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          void form.handleSubmit()
+        }}
+        className="space-y-4"
+      >
+        <form.AppField
+          name="title"
+          children={(field) => <TextField field={field} label="Title" />}
+        />
 
-      <form.AppField
-        name="description"
-        children={(field) => (
-          <TextareaField field={field} label="Description" adapter={nullableStringAdapter} />
-        )}
-      />
+        <form.AppField
+          name="description"
+          children={(field) => (
+            <TextareaField field={field} label="Description" adapter={nullableStringAdapter} />
+          )}
+        />
 
-      <form.Subscribe
-        selector={(state) => [state.canSubmit, state.isSubmitting]}
-        children={([canSubmit, isSubmitting]) => (
-          <Button type="submit" disabled={!canSubmit || isSubmitting}>
-            {isSubmitting ? 'Creating...' : 'Create todo'}
-          </Button>
-        )}
-      />
-    </form>
+        <form.SubmitButton pendingLabel="Creating...">Create todo</form.SubmitButton>
+      </form>
+    </form.AppForm>
   )
 }
