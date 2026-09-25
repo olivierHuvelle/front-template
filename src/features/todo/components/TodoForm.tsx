@@ -5,6 +5,7 @@ import { todoService } from '@/features/todo/todo.service'
 import { nullableStringAdapter } from '@/components/form/adapters/nullableStringAdapter'
 import { TextareaField } from '@/components/form/TextareaField'
 import { TextField } from '@/components/form/TextField'
+import { applyFormSubmissionError } from '@/components/form/applyFormSubmissionError.ts'
 
 type TodoFormProps = {
   onSuccess?: () => void
@@ -22,9 +23,14 @@ export function TodoForm({ onSuccess }: TodoFormProps) {
       onMount: todoResource.createSchema,
       onChange: todoResource.createSchema,
     },
+
     onSubmit: async ({ value }) => {
-      await createTodo.mutateAsync(value)
-      onSuccess?.()
+      try {
+        await createTodo.mutateAsync(value)
+        onSuccess?.()
+      } catch (error) {
+        applyFormSubmissionError(form, error)
+      }
     },
   })
 
@@ -48,7 +54,7 @@ export function TodoForm({ onSuccess }: TodoFormProps) {
             <TextareaField field={field} label="Description" adapter={nullableStringAdapter} />
           )}
         />
-
+        <form.FormError />
         <form.SubmitButton pendingLabel="Creating...">Create todo</form.SubmitButton>
       </form>
     </form.AppForm>
