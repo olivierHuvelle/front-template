@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useAppForm } from '@/components/form/useAppForm'
 import { todoResource } from '@/features/todo/todo.resource'
 import { todoService } from '@/features/todo/todo.service'
@@ -9,9 +10,10 @@ import { applyFormSubmissionError } from '@/components/form/applyFormSubmissionE
 
 type TodoFormProps = {
   onSuccess?: () => void
+  renderActions?: (submitButton: ReactNode) => ReactNode
 }
 
-export function TodoForm({ onSuccess }: TodoFormProps) {
+export function TodoForm({ onSuccess, renderActions }: TodoFormProps) {
   const createTodo = todoService.useCreate()
 
   const form = useAppForm({
@@ -34,6 +36,8 @@ export function TodoForm({ onSuccess }: TodoFormProps) {
     },
   })
 
+  const submitButton = <form.SubmitButton pendingLabel="Creating...">Create todo</form.SubmitButton>
+
   return (
     <form.AppForm>
       <form
@@ -55,7 +59,8 @@ export function TodoForm({ onSuccess }: TodoFormProps) {
           )}
         />
         <form.FormError />
-        <form.SubmitButton pendingLabel="Creating...">Create todo</form.SubmitButton>
+
+        {renderActions ? renderActions(submitButton) : submitButton}
       </form>
     </form.AppForm>
   )

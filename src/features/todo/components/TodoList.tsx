@@ -1,3 +1,4 @@
+import { TodoItem } from '@/features/todo/components/TodoItem'
 import { todoService } from '@/features/todo/todo.service'
 
 export function TodoList() {
@@ -25,13 +26,7 @@ export function TodoList() {
   return (
     <ul className="space-y-2">
       {todos.map((todo) => (
-        <li key={todo.id} className="rounded-lg border p-4">
-          <div className="font-medium">{todo.title}</div>
-
-          {todo.description && (
-            <div className="text-sm text-muted-foreground">{todo.description}</div>
-          )}
-        </li>
+        <TodoItem key={todo.id} todo={todo} />
       ))}
     </ul>
   )

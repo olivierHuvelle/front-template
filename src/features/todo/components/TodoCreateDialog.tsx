@@ -13,24 +13,29 @@ import {
 } from '@/components/ui/dialog'
 import { TodoForm } from '@/features/todo/components/TodoForm'
 
-export function CreateTodoDialog() {
+export function TodoCreateDialog() {
   const [open, setOpen] = useState(false)
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button />}>New todo</DialogTrigger>
 
-      <DialogContent>
+      <DialogContent initialFocus={false}>
         <DialogHeader>
           <DialogTitle>Create todo</DialogTitle>
           <DialogDescription>Create a new todo item.</DialogDescription>
         </DialogHeader>
 
-        <TodoForm onSuccess={() => setOpen(false)} />
+        <TodoForm
+          onSuccess={() => setOpen(false)}
+          renderActions={(submitButton) => (
+            <DialogFooter>
+              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
 
-        <DialogFooter>
-          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-        </DialogFooter>
+              {submitButton}
+            </DialogFooter>
+          )}
+        />
       </DialogContent>
     </Dialog>
   )
